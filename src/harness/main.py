@@ -19,6 +19,8 @@ def main():
     parser = argparse.ArgumentParser(description="AI Coding Harness MVP")
     parser.add_argument("--repo", type=str, default=".", help="Path to repository")
     parser.add_argument("--task", type=str, default="", help="Coding task description")
+    parser.add_argument("--provider", type=str, default="", help="Override model provider (e.g. deepseek, qwen)")
+    parser.add_argument("--model", type=str, default="", help="Override model ID")
     args = parser.parse_args()
 
     if not args.task:
@@ -27,8 +29,11 @@ def main():
 
     config = load_config()
 
+    provider = args.provider if args.provider else config.model.provider
+    model_name = args.model if args.model else config.model.name
+
     try:
-        model_client = get_client(config.model.name, config.model.provider)
+        model_client = get_client(model_name, provider)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
@@ -64,8 +69,8 @@ def main():
         task=args.task,
         repo_path=args.repo,
         evaluation_report={
-            "model_provider": config.model.provider,
-            "model_name": config.model.name,
+            "model_provider": provider,
+            "model_name": model_name,
         },
     )
 

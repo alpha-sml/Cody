@@ -3,9 +3,14 @@ from .base import BaseModelClient
 from .providers import MockClient, DeepSeekClient, QwenClient
 
 def get_client(model_name: str, provider: str = "deepseek") -> BaseModelClient:
-    is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true"
+    provider = provider.lower().strip()
+
+    is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true" or provider == "mock"
     if is_mock:
         return MockClient()
+
+    if provider not in ("deepseek", "qwen"):
+        raise ValueError(f"Unknown provider: {provider}")
 
     api_key = os.environ.get(f"{provider.upper()}_API_KEY") or os.environ.get("AI_API_KEY")
     if not api_key:
@@ -15,5 +20,3 @@ def get_client(model_name: str, provider: str = "deepseek") -> BaseModelClient:
         return DeepSeekClient(api_key, model_name)
     elif provider == "qwen":
         return QwenClient(api_key, model_name)
-    else:
-        raise ValueError(f"Unknown provider: {provider}")

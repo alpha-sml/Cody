@@ -44,3 +44,24 @@ def test_cli_requires_task(monkeypatch, capsys):
 
     assert exit_info.value.code == 1
     assert "Error: --task argument is required." in capsys.readouterr().out
+
+def test_cli_provider_override(monkeypatch, tmp_path, capsys):
+    captured = {}
+    def mock_get_client(model_name, provider):
+        captured["model_name"] = model_name
+        captured["provider"] = provider
+        return object()
+
+    monkeypatch.setattr(main_module, "get_client", mock_get_client)
+    monkeypatch.setattr(main_module, "Orchestrator", lambda **kwargs: type("M", (), {"run": lambda self, state: state})())
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["cody", "--task", "test task", "--provider", "qwen", "--model", "qwen-turbo"],
+    )
+
+    main_module.main()
+
+    assert captured["provider"] == "qwen"
+    assert captured["model_name"] == "qwen-turbo"

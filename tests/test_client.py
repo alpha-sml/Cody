@@ -213,3 +213,45 @@ def test_qwen_client_malformed_response():
         action = client.generate("test")
     assert action["action"] == "error"
     assert action["error_type"] == "model_api_error"
+
+import os
+from src.harness.model.client import get_client
+from src.harness.model.providers.mock import MockClient
+
+def test_get_client_default():
+    # Should default to deepseek
+    os.environ["AI_API_KEY"] = "fake"
+    client = get_client("model_name")
+    assert isinstance(client, DeepSeekClient)
+    assert client.api_key == "fake"
+    os.environ.pop("AI_API_KEY", None)
+
+def test_get_client_explicit_deepseek():
+    os.environ["DEEPSEEK_API_KEY"] = "ds_key"
+    client = get_client("model_name", "deepseek")
+    assert isinstance(client, DeepSeekClient)
+    assert client.api_key == "ds_key"
+    os.environ.pop("DEEPSEEK_API_KEY", None)
+
+def test_get_client_explicit_qwen():
+    os.environ["QWEN_API_KEY"] = "qw_key"
+    client = get_client("model_name", "qwen")
+    assert isinstance(client, QwenClient)
+    assert client.api_key == "qw_key"
+    os.environ.pop("QWEN_API_KEY", None)
+
+def test_get_client_explicit_mock():
+    client = get_client("model_name", "mock")
+    assert isinstance(client, MockClient)
+
+def test_get_client_case_insensitive():
+    os.environ["QWEN_API_KEY"] = "qw_key"
+    client = get_client("model_name", " QWEN ")
+    assert isinstance(client, QwenClient)
+    assert client.api_key == "qw_key"
+    os.environ.pop("QWEN_API_KEY", None)
+
+def test_get_client_unsupported():
+    # Should reject unsupported provider even when no API key exists
+    with pytest.raises(ValueError, match="Unknown provider"):
+        get_client("model_name", "unsupported")
