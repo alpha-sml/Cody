@@ -27,7 +27,7 @@ def main():
     config = load_config()
 
     try:
-        model_client = get_client(config.model.name)
+        model_client = get_client(config.model.name, config.model.provider)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)

@@ -2,7 +2,9 @@ import pytest
 import os
 import requests
 from unittest.mock import patch
-from src.harness.model.client import extract_json, MockClient, GoogleClient
+from src.harness.model.boundary import extract_json
+from src.harness.model.providers.mock import MockClient
+from src.harness.model.providers.google import GoogleClient
 from src.harness.tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool, safe_path
 from src.harness.tools.shell import ShellTool
 from src.harness.tools.git import GitStatusTool, GitDiffTool
@@ -230,7 +232,7 @@ def test_planner_validation():
     plan = planner.update_plan(state)
     assert plan == ["1. Do this", "2. Do that"]
 
-from src.harness.model.client import validate_action
+from src.harness.model.boundary import validate_action
 
 def test_model_validation():
     # finish missing result

@@ -1,7 +1,7 @@
 from typing import Dict, Any, List, Optional
 import json
 from ..model.base import BaseModelClient
-from ..model.client import validate_action
+from ..model.boundary import validate_action
 from ..state import State
 
 class RecoveryManager:

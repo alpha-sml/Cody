@@ -1,159 +1,8 @@
 import os
-import json
-import re
-import requests
 from .base import BaseModelClient
-from typing import List, Dict, Any, Optional
+from .providers import MockClient, GoogleClient, DeepSeekClient, QwenClient
 
-def validate_action(action: Dict[str, Any]) -> Dict[str, Any]:
-    action_type = action.get("action")
-    if action_type == "tool_call":
-        tool = action.get("tool")
-        args = action.get("arguments")
-        if not isinstance(tool, str) or not tool.strip() or not isinstance(args, dict):
-            return {
-                "action": "error",
-                "error_type": "invalid_model_action",
-                "message": "tool_call requires non-empty string 'tool' and dict 'arguments'"
-            }
-    elif action_type == "finish":
-        if "result" not in action or not isinstance(action.get("result"), str):
-            return {
-                "action": "error",
-                "error_type": "invalid_model_action",
-                "message": "finish action requires a 'result' string"
-            }
-    elif action_type == "error":
-        if not isinstance(action.get("error_type"), str) or not isinstance(action.get("message"), str):
-            return {
-                "action": "error",
-                "error_type": "invalid_model_action",
-                "message": "error requires string 'error_type' and 'message'"
-            }
-    else:
-        return {
-            "action": "error",
-            "error_type": "invalid_model_action",
-            "message": f"Unknown action: {action_type}"
-        }
-    return action
-
-def extract_json(text: str) -> Dict[str, Any]:
-    # Try markdown json blocks firs
-    json_blocks = re.findall(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-    for block in json_blocks:
-        try:
-            return json.loads(block)
-        except json.JSONDecodeError:
-            continue
-
-    # Try to find the first '{' and parse up to the last valid '}'
-    start_idx = text.find('{')
-    if start_idx != -1:
-        # Iterate backwards from the end to find the closing brace
-        for i in range(len(text) - 1, start_idx - 1, -1):
-            if text[i] == '}':
-                try:
-                    return json.loads(text[start_idx:i+1])
-                except json.JSONDecodeError:
-                    continue
-
-    return {
-        "action": "error",
-        "error_type": "invalid_model_response",
-        "message": "Failed to extract valid JSON action from model response.",
-        "raw_response": text
-    }
-
-class MockClient(BaseModelClient):
-    def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        # Return deterministic responses based on prompt keywords for testing
-        if "test_search" in prompt:
-            return {"action": "tool_call", "tool": "file_search", "arguments": {"pattern": "test"}}
-        elif "test_write" in prompt:
-            return {"action": "tool_call", "tool": "file_write", "arguments": {"path": "test.txt", "content": "mock"}}
-        elif "test_read" in prompt:
-            return {"action": "tool_call", "tool": "file_read", "arguments": {"path": "test.txt"}}
-        elif "test_shell" in prompt:
-            return {"action": "tool_call", "tool": "shell", "arguments": {"command": "echo mock"}}
-        elif "recovery" in prompt.lower():
-            return validate_action({"action": "tool_call", "tool": "shell", "arguments": {"command": "echo fixed"}})
-        return validate_action({"action": "finish", "result": "Mock finished"})
-
-class GoogleClient(BaseModelClient):
-    def __init__(self, api_key: str, model_name: str):
-        self.api_key = api_key
-        self.model_name = model_name
-
-    def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
-
-        contents = []
-        if system_prompt:
-            contents.append({"role": "user", "parts": [{"text": "SYSTEM: " + system_prompt}]})
-
-        contents.append({"role": "user", "parts": [{"text": prompt}]})
-
-        payload = {"contents": contents}
-
-        if tools:
-            function_declarations = []
-            for tool in tools:
-                function_declarations.append({
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get("parameters", {"type": "object", "properties": {}})
-                })
-            payload["tools"] = [{"functionDeclarations": function_declarations}]
-
-        try:
-            response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                try:
-                    candidates = data.get('candidates', [])
-                    if not candidates:
-                        return {"action": "error", "error_type": "model_api_error", "message": "No candidates in API response"}
-
-                    content = candidates[0].get('content', {})
-                    if not content:
-                        return {"action": "error", "error_type": "model_api_error", "message": "No content in API response"}
-
-                    parts = content.get('parts', [])
-                    if not parts:
-                        return {"action": "error", "error_type": "model_api_error", "message": "No parts in API response"}
-
-                    for part in parts:
-                        if 'functionCall' in part:
-                            fc = part['functionCall']
-                            if not isinstance(fc, dict):
-                                return {"action": "error", "error_type": "model_api_error", "message": "Malformed functionCall structure"}
-
-                            args = fc.get("args")
-                            if args is None:
-                                args = {}
-
-                            return validate_action({
-                                "action": "tool_call",
-                                "tool": fc.get("name"),
-                                "arguments": args
-                            })
-
-                    if 'text' in parts[0] and isinstance(parts[0]['text'], str):
-                        text = parts[0]['text']
-                        return validate_action(extract_json(text))
-
-                    return {"action": "error", "error_type": "model_api_error", "message": "No valid functionCall or text found"}
-                except (KeyError, IndexError, TypeError) as e:
-                    return {"action": "error", "error_type": "model_api_error", "message": f"Invalid response structure from API: {str(e)}"}
-            else:
-                return {"action": "error", "error_type": "model_api_error", "message": f"API error: {response.status_code} {response.text}"}
-        except requests.Timeout:
-            return {"action": "error", "error_type": "model_api_timeout", "message": "API request timed out"}
-        except Exception as e:
-            return {"action": "error", "error_type": "model_api_error", "message": f"API exception: {str(e)}"}
-
-def get_client(model_name: str) -> BaseModelClient:
+def get_client(model_name: str, provider: str = "google") -> BaseModelClient:
     is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true"
     if is_mock:
         return MockClient()
@@ -161,4 +10,11 @@ def get_client(model_name: str) -> BaseModelClient:
     api_key = os.environ.get("AI_API_KEY")
     if not api_key:
         raise ValueError("AI_API_KEY environment variable is not set")
-    return GoogleClient(api_key, model_name)
+    if provider == "google":
+        return GoogleClient(api_key, model_name)
+    elif provider == "deepseek":
+        return DeepSeekClient(api_key, model_name)
+    elif provider == "qwen":
+        return QwenClient(api_key, model_name)
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
