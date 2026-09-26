@@ -165,12 +165,20 @@ def test_repo_tree_generates_tree_for_valid_depth(tmp_path):
     assert str(tmp_path / "nested" / "file.txt") in result["tree"]
 
 
-def test_shell_tool_strips_ai_api_key(tmp_path):
-    os.environ["AI_API_KEY"] = "secret-key-123"
+def test_shell_tool_strips_api_keys(tmp_path):
+    os.environ["DEEPSEEK_API_KEY"] = "secret-ds"
+    os.environ["QWEN_API_KEY"] = "secret-qw"
+    os.environ["AI_API_KEY"] = "secret-ai"
     try:
         shell_tool = ShellTool(str(tmp_path))
         res = shell_tool.execute(command="env")
-        assert "secret-key-123" not in res["stdout"]
+        assert "secret-ds" not in res["stdout"]
+        assert "DEEPSEEK_API_KEY=" not in res["stdout"]
+        assert "secret-qw" not in res["stdout"]
+        assert "QWEN_API_KEY=" not in res["stdout"]
+        assert "secret-ai" not in res["stdout"]
         assert "AI_API_KEY=" not in res["stdout"]
     finally:
+        os.environ.pop("DEEPSEEK_API_KEY", None)
+        os.environ.pop("QWEN_API_KEY", None)
         os.environ.pop("AI_API_KEY", None)

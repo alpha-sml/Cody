@@ -21,7 +21,8 @@ Run commands from the repository root. The default configuration is loaded from
 set the configured provider's required credentials before starting the harness:
 
 ```bash
-export AI_API_KEY="your-key"
+export DEEPSEEK_API_KEY="your-key"
+export QWEN_API_KEY="your-key"
 ```
 
 ## Running

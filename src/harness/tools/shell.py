@@ -25,6 +25,8 @@ class ShellTool(BaseTool):
         try:
             import os
             env = os.environ.copy()
+            env.pop("DEEPSEEK_API_KEY", None)
+            env.pop("QWEN_API_KEY", None)
             env.pop("AI_API_KEY", None)
 
             result = subprocess.run(

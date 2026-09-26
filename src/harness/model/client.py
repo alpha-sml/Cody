@@ -14,7 +14,7 @@ def get_client(model_name: str, provider: str = "deepseek") -> BaseModelClient:
 
     api_key = os.environ.get(f"{provider.upper()}_API_KEY") or os.environ.get("AI_API_KEY")
     if not api_key:
-        raise ValueError(f"AI_API_KEY or {provider.upper()}_API_KEY environment variable is not set")
+        raise ValueError(f"{provider.upper()}_API_KEY or AI_API_KEY environment variable is not set")
 
     if provider == "deepseek":
         return DeepSeekClient(api_key, model_name)

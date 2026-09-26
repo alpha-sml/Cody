@@ -220,11 +220,11 @@ from src.harness.model.providers.mock import MockClient
 
 def test_get_client_default():
     # Should default to deepseek
-    os.environ["AI_API_KEY"] = "fake"
+    os.environ["DEEPSEEK_API_KEY"] = "fake"
     client = get_client("model_name")
     assert isinstance(client, DeepSeekClient)
     assert client.api_key == "fake"
-    os.environ.pop("AI_API_KEY", None)
+    os.environ.pop("DEEPSEEK_API_KEY", None)
 
 def test_get_client_explicit_deepseek():
     os.environ["DEEPSEEK_API_KEY"] = "ds_key"
@@ -255,3 +255,11 @@ def test_get_client_unsupported():
     # Should reject unsupported provider even when no API key exists
     with pytest.raises(ValueError, match="Unknown provider"):
         get_client("model_name", "unsupported")
+
+def test_get_client_ai_api_key_fallback():
+    # Should fallback to AI_API_KEY
+    os.environ["AI_API_KEY"] = "fallback"
+    client = get_client("model_name", "deepseek")
+    assert isinstance(client, DeepSeekClient)
+    assert client.api_key == "fallback"
+    os.environ.pop("AI_API_KEY", None)
