@@ -1,0 +1,8 @@
+model:
+  name: "gemini-pro"
+  provider: "google"
+  max_tokens: 8192
+
+agent:
+  max_iterations: 15
+  timeout_seconds: 300

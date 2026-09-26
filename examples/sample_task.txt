@@ -1,0 +1,1 @@
+Add a new function `def multiply(a, b): return a * b` to math_operations.py. Ensure tests pass.
