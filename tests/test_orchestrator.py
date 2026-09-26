@@ -46,6 +46,28 @@ class MockModel(BaseModelClient):
             return action
         return {"action": "finish", "result": "default finish"}
 
+
+class CountingModel(BaseModelClient):
+    def __init__(self, actions):
+        self.actions = list(actions)
+        self.plan_calls = 0
+        self.execution_calls = 0
+        self.recovery_calls = 0
+        self.prompts = []
+
+    def generate(self, prompt, system_prompt=None, tools=None):
+        self.prompts.append(prompt)
+        if "Provide a step-by-step plan" in prompt:
+            self.plan_calls += 1
+            return {"action": "finish", "result": "inspect, then update the target"}
+        if "Failure Classification:" in prompt:
+            self.recovery_calls += 1
+        else:
+            self.execution_calls += 1
+        if self.actions:
+            return self.actions.pop(0)
+        return {"action": "finish", "result": "done"}
+
 class MockPlanner(Planner):
     def update_plan(self, state):
         return ["mock plan step"]
@@ -117,6 +139,62 @@ def test_changed_files_are_copied_from_verifier():
 
     assert final_state.status == "success"
     assert final_state.changed_files == ["src/changed.py", "tests/changed.py"]
+
+
+def test_normal_success_call_sequence_keeps_planner_context():
+    model = CountingModel([{"action": "finish", "result": "completed"}])
+    registry = ToolRegistry()
+    registry.register(MockTool())
+    class RepoTreeMock(MockTool):
+        name = "repo_tree"
+    registry.register(RepoTreeMock())
+    verifier = MockVerifier()
+    orchestrator = Orchestrator(
+        model,
+        registry,
+        verifier,
+        RecoveryManager(model),
+        ContextManager(),
+        Planner(model),
+    )
+
+    final_state = orchestrator.run(State(task="Test"))
+
+    assert final_state.status == "success"
+    assert model.plan_calls == 1
+    assert model.execution_calls == 1
+    assert model.recovery_calls == 0
+    assert len(model.prompts) == 2
+    assert "inspect, then update the target" in model.prompts[1]
+
+
+def test_recovery_call_sequence_adds_one_model_call_per_recovery():
+    model = CountingModel([
+        {"action": "finish", "result": "initial"},
+        {"action": "finish", "result": "retry"},
+    ])
+    registry = ToolRegistry()
+    registry.register(MockTool())
+    class RepoTreeMock(MockTool):
+        name = "repo_tree"
+    registry.register(RepoTreeMock())
+    verifier = MockVerifier(succeed_on_call=2)
+    orchestrator = Orchestrator(
+        model,
+        registry,
+        verifier,
+        RecoveryManager(model),
+        ContextManager(),
+        Planner(model),
+    )
+
+    final_state = orchestrator.run(State(task="Test"))
+
+    assert final_state.status == "success"
+    assert model.plan_calls == 1
+    assert model.execution_calls == 1
+    assert model.recovery_calls == 1
+    assert len(model.prompts) == 3
 
 def test_model_error():
     orch, model = setup_orchestrator([{"action": "error", "error_type": "api", "message": "API down"}] * 10, max_iterations=5)
