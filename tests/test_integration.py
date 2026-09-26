@@ -356,6 +356,48 @@ def test_preexisting_change_is_not_attributed_to_cody(tmp_path):
     assert state.verification_results[0]["completion_status"] == "VERIFIED_SUCCESS"
 
 
+def test_cody_rewrite_of_preexisting_file_is_attributed(tmp_path):
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    target = tmp_path / "target.txt"
+    target.write_text("baseline\n")
+    run_git(repo, "add", "target.txt")
+    run_git(repo, "commit", "-qm", "initial")
+    target.write_text("user change\n")
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [{"action": "tool_call", "tool": "file_write", "arguments": {"path": "target.txt", "content": "cody change\n"}}],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    state = orchestrator.run(State(task="Fix target.txt", repo_path=repo))
+
+    assert state.status == "success"
+    assert state.baseline_repository["changed_files"] == ["target.txt"]
+    assert state.verification_results[0]["completion_status"] == "VERIFIED_SUCCESS"
+
+
+def test_noop_rewrite_of_preexisting_file_is_not_meaningful(tmp_path):
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    target = tmp_path / "target.txt"
+    target.write_text("baseline\n")
+    run_git(repo, "add", "target.txt")
+    run_git(repo, "commit", "-qm", "initial")
+    target.write_text("user change\n")
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [{"action": "tool_call", "tool": "file_write", "arguments": {"path": "target.txt", "content": "user change\n"}}],
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Fix target.txt", repo_path=repo))
+
+    assert state.status == "failed"
+    assert state.verification_results[0]["completion_status"] == "NO_MEANINGFUL_CHANGE"
+
+
 def test_unexpected_change_is_rejected(tmp_path):
     repo = str(tmp_path)
     orchestrator, model, verifier = build_pipeline(

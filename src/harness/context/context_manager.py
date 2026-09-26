@@ -7,6 +7,7 @@ class ContextManager:
         self.relevant_files: List[str] = []
         self.file_contents: Dict[str, str] = {}
         self.tool_results: List[Dict[str, Any]] = []
+        self.verification_results: List[Dict[str, Any]] = []
         self.errors: List[str] = []
         self.git_status: str = ""
         self.git_diff: str = ""
@@ -53,12 +54,18 @@ class ContextManager:
         if len(self.errors) > 5:
             self.errors.pop(0)
 
+    def add_verification_result(self, result: Dict[str, Any]):
+        self.verification_results.append(result)
+        if len(self.verification_results) > 3:
+            self.verification_results.pop(0)
+
     def get_context_dict(self) -> Dict[str, Any]:
         d = {
             "repository_tree": self.repository_tree,
             "relevant_files": self.relevant_files,
             "file_contents": self.file_contents,
             "tool_results": self.tool_results,
+            "verification_results": self.verification_results,
             "errors": self.errors
         }
         if self.git_status:
@@ -75,6 +82,7 @@ class ContextManager:
         self.relevant_files = []
         self.file_contents = {}
         self.tool_results = []
+        self.verification_results = []
         self.errors = []
         self.git_status = ""
         self.git_diff = ""

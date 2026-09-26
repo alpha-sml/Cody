@@ -38,3 +38,9 @@ def test_context_manager_bounding():
         cm.add_error(f"error {i}")
     assert len(cm.errors) == 5
     assert cm.errors[-1] == "error 9"
+
+    for i in range(5):
+        cm.add_verification_result({"completion_status": f"result {i}"})
+    assert len(cm.verification_results) == 3
+    assert cm.verification_results[0]["completion_status"] == "result 2"
+    assert cm.get_context_dict()["verification_results"][-1]["completion_status"] == "result 4"

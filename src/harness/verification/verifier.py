@@ -1,5 +1,7 @@
 from .test_runner import TestRunner
 from typing import Dict, Any
+import hashlib
+import os
 import subprocess
 
 def _bounded_output(output: Any) -> str:
@@ -50,12 +52,21 @@ class Verifier:
             if path and not path.startswith(".git/") and path not in changed_files:
                 changed_files.append(path)
 
+        file_signatures = {}
+        for path in changed_files:
+            try:
+                with open(os.path.join(self.repo_path, path), "rb") as changed_file:
+                    file_signatures[path] = hashlib.sha256(changed_file.read()).hexdigest()
+            except OSError:
+                file_signatures[path] = None
+
         return {
             "changed_files": changed_files,
             "tracked_changes": tracked_changes,
             "untracked_changes": untracked_changes,
             "status": status_lines,
             "diff_available": bool(tracked_changes),
+            "file_signatures": file_signatures,
             "verification_errors": errors,
         }
 
@@ -84,6 +95,7 @@ class Verifier:
             "tracked_changes": repository["tracked_changes"],
             "untracked_changes": repository["untracked_changes"],
             "diff_available": repository["diff_available"],
+            "file_signatures": repository["file_signatures"],
             "verification_errors": verification_errors,
         }
         if result.get("error") is not None:

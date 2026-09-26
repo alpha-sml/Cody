@@ -69,6 +69,11 @@ class Orchestrator:
         current_files = set(verification.get("changed_files", []))
         cody_files = current_files - baseline_files
         expected_files = self._expected_changed_files(state)
+        baseline_signatures = baseline.get("file_signatures", {})
+        current_signatures = verification.get("file_signatures", {})
+        for path in expected_files & current_files:
+            if current_signatures.get(path) != baseline_signatures.get(path):
+                cody_files.add(path)
 
         if not cody_files:
             evidence_tools = {"file_read", "file_search", "git_status", "git_diff"}
@@ -218,6 +223,7 @@ class Orchestrator:
                 state.changed_files = list(changed_files) if isinstance(changed_files, list) else []
                 completion_status = self._completion_gate(state, verif_res)
                 verif_res["completion_status"] = completion_status
+                self.context_manager.add_verification_result(verif_res)
                 if completion_status == "VERIFIED_SUCCESS":
                     state.status = "success"
                     if not state.final_result:
