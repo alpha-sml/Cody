@@ -59,7 +59,11 @@ def test_tracked_and_untracked_files_are_detected_together(tmp_path):
     tracked_file.write_text("after\n")
     (tmp_path / "untracked.txt").write_text("new\n")
 
-    assert verify_repo(tmp_path)["changed_files"] == ["tracked.txt", "untracked.txt"]
+    result = verify_repo(tmp_path)
+    assert result["changed_files"] == ["tracked.txt", "untracked.txt"]
+    assert result["tracked_changes"] == ["tracked.txt"]
+    assert result["untracked_changes"] == ["untracked.txt"]
+    assert result["tests_run"] is True
 
 
 def test_clean_repository_has_no_changed_files(tmp_path):

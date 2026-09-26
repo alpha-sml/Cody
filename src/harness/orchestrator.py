@@ -6,6 +6,7 @@ from .recovery.recovery import RecoveryManager
 from .context.context_manager import ContextManager
 from .planner import Planner
 import json
+import re
 
 class Orchestrator:
     def __init__(
@@ -32,6 +33,59 @@ class Orchestrator:
         state.errors.append(error)
         self.context_manager.add_error(error)
 
+    def _capture_baseline(self, state: State):
+        capture = getattr(self.verifier, "capture_baseline", None)
+        if callable(capture):
+            try:
+                state.baseline_repository = capture()
+            except Exception as exc:
+                self._record_error(state, f"Repository baseline capture failed: {exc}")
+
+    def _expected_changed_files(self, state: State):
+        expected = set()
+        for entry in state.tool_history:
+            tool_name = entry.get("tool")
+            arguments = entry.get("args", {})
+            if tool_name in {"file_write", "apply_patch"} and isinstance(arguments, dict):
+                path = arguments.get("path")
+                if isinstance(path, str):
+                    expected.add(path)
+
+        for path in re.findall(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+", state.task):
+            expected.add(path)
+        return expected
+
+    def _completion_gate(self, state: State, verification: dict):
+        if not verification.get("tests_passed"):
+            return "TEST_FAILURE"
+        if verification.get("verification_errors"):
+            return "VERIFICATION_FAILED"
+
+        if not state.baseline_repository and "verification_errors" not in verification:
+            return "VERIFIED_SUCCESS"
+
+        baseline = state.baseline_repository or {}
+        baseline_files = set(baseline.get("changed_files", []))
+        current_files = set(verification.get("changed_files", []))
+        cody_files = current_files - baseline_files
+        expected_files = self._expected_changed_files(state)
+
+        if not cody_files:
+            evidence_tools = {"file_read", "file_search", "git_status", "git_diff"}
+            has_task_evidence = any(
+                entry.get("tool") in evidence_tools
+                for entry in state.tool_history
+            )
+            if not has_task_evidence:
+                return "NO_MEANINGFUL_CHANGE"
+
+        unexpected = cody_files - expected_files
+        has_shell_change = any(entry.get("tool") == "shell" for entry in state.tool_history)
+        if unexpected and not has_shell_change:
+            return "UNEXPECTED_CHANGES"
+
+        return "VERIFIED_SUCCESS"
+
     def _handle_action(self, action: dict, state: State):
         if not isinstance(action, dict):
             self._record_error(state, "Invalid model action")
@@ -39,6 +93,10 @@ class Orchestrator:
             return
 
         if action.get("action") == "finish":
+            if not isinstance(action.get("result"), str) or not action.get("result", "").strip():
+                self._record_error(state, "Invalid finish action: result must be a non-empty string.")
+                state.phase = "PLAN"
+                return
             state.final_result = action.get("result", "")
             state.phase = "VERIFY"
         elif action.get("action") == "error":
@@ -119,6 +177,7 @@ class Orchestrator:
                         self._record_error(state, str(res.get("error", "Repository tree discovery failed.")))
                     elif res is not None:
                         self._record_error(state, "Repository tree discovery returned an invalid result.")
+                self._capture_baseline(state)
                 state.phase = "PLAN"
 
             elif current_phase == "PLAN":
@@ -155,7 +214,9 @@ class Orchestrator:
                 state.verification_results.append(verif_res)
                 changed_files = verif_res.get("changed_files", [])
                 state.changed_files = list(changed_files) if isinstance(changed_files, list) else []
-                if verif_res.get("verified") and verif_res.get("tests_passed"):
+                completion_status = self._completion_gate(state, verif_res)
+                verif_res["completion_status"] = completion_status
+                if completion_status == "VERIFIED_SUCCESS":
                     state.status = "success"
                     if not state.final_result:
                         state.final_result = "Verified successfully."

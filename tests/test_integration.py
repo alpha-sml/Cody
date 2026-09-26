@@ -53,6 +53,7 @@ def initialize_git_repo(repo):
 
 
 def build_pipeline(repo, actions, test_results, max_iterations=15, max_recovery_attempts=3):
+    initialize_git_repo(repo)
     model = PipelineModel(actions)
     registry = ToolRegistry()
     registry.register(RepoTreeTool(repo))
@@ -79,6 +80,7 @@ def build_pipeline(repo, actions, test_results, max_iterations=15, max_recovery_
 
 def test_full_integration(tmp_path):
     repo = str(tmp_path)
+    initialize_git_repo(repo)
     
     # Mock model designed to succeed at first, fail test, recover, and succeed
     class IntegrationMock(MockClient):
@@ -176,7 +178,7 @@ def test_tool_failure_records_error_and_returns_to_plan(tmp_path):
         repo,
         [
             {"action": "tool_call", "tool": "file_write", "arguments": {"path": "../outside.txt", "content": "bad"}},
-            {"action": "finish", "result": "done"},
+            {"action": "tool_call", "tool": "file_write", "arguments": {"path": "recovered.txt", "content": "done"}},
         ],
         [{"status": "success", "exit_code": 0}],
     )
@@ -206,8 +208,11 @@ def test_verification_failure_enters_recovery(tmp_path):
 
 def test_recovery_success_runs_verification_again(tmp_path):
     repo = str(tmp_path)
+    initialize_git_repo(repo)
     target = tmp_path / "fixed.txt"
     target.write_text("broken")
+    run_git(repo, "add", "fixed.txt")
+    run_git(repo, "commit", "-qm", "initial")
     orchestrator, model, verifier = build_pipeline(
         repo,
         [
@@ -277,7 +282,7 @@ def test_malformed_action_records_error_and_returns_to_plan(tmp_path):
     repo = str(tmp_path)
     orchestrator, model, verifier = build_pipeline(
         repo,
-        [None, {"action": "finish", "result": "recovered"}],
+        [None, {"action": "tool_call", "tool": "file_write", "arguments": {"path": "recovered.txt", "content": "recovered"}}],
         [{"status": "success", "exit_code": 0}],
     )
 
@@ -293,7 +298,7 @@ def test_planner_failure_uses_real_orchestrator_recovery_path(tmp_path):
     repo = str(tmp_path)
     orchestrator, model, verifier = build_pipeline(
         repo,
-        [{"action": "finish", "result": "recovered"}],
+        [{"action": "tool_call", "tool": "file_write", "arguments": {"path": "recovered.txt", "content": "recovered"}}],
         [{"status": "success", "exit_code": 0}],
     )
     orchestrator.planner = FailingPlanner(model)
@@ -306,3 +311,82 @@ def test_planner_failure_uses_real_orchestrator_recovery_path(tmp_path):
     assert verifier.test_runner.calls == 1
     assert "Planner update failed: planner model failure" in state.errors
     assert "Planner update failed: planner model failure" in orchestrator.context_manager.errors
+
+
+def test_passing_tests_without_meaningful_change_do_not_verify_success(tmp_path):
+    repo = str(tmp_path)
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [{"action": "finish", "result": "nothing changed"}] * 4,
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Run the existing tests", repo_path=repo))
+
+    assert state.status == "failed"
+    assert state.verification_results[0]["completion_status"] == "NO_MEANINGFUL_CHANGE"
+    assert state.final_result == "Max recovery attempts reached."
+
+
+def test_preexisting_change_is_not_attributed_to_cody(tmp_path):
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    preexisting = tmp_path / "user.txt"
+    preexisting.write_text("before\n")
+    run_git(repo, "add", "user.txt")
+    run_git(repo, "commit", "-qm", "initial")
+    preexisting.write_text("user change\n")
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [{"action": "tool_call", "tool": "file_write", "arguments": {"path": "cody.txt", "content": "agent change"}}],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    state = orchestrator.run(State(task="Create cody.txt", repo_path=repo))
+
+    assert state.status == "success"
+    assert state.changed_files == ["user.txt", "cody.txt"]
+    assert state.baseline_repository["changed_files"] == ["user.txt"]
+
+
+def test_unexpected_change_is_rejected(tmp_path):
+    repo = str(tmp_path)
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [{"action": "tool_call", "tool": "file_write", "arguments": {"path": "expected.txt", "content": "expected"}}],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    original_tool = orchestrator.tool_registry.get_tool("file_write")
+
+    class NoisyFileWrite(FileWriteTool):
+        def execute(self, **kwargs):
+            result = original_tool.execute(**kwargs)
+            with open(os.path.join(repo, "unexpected.txt"), "w") as file_handle:
+                file_handle.write("unexpected")
+            return result
+
+    orchestrator.tool_registry.register(NoisyFileWrite(repo))
+    state = orchestrator.run(State(task="Create expected.txt", repo_path=repo))
+
+    assert state.status == "failed"
+    assert state.verification_results[0]["completion_status"] == "UNEXPECTED_CHANGES"
+
+
+def test_malformed_finish_action_is_controlled(tmp_path):
+    repo = str(tmp_path)
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {"action": "finish"},
+            {"action": "tool_call", "tool": "file_write", "arguments": {"path": "recovered.txt", "content": "recovered"}},
+        ],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    state = orchestrator.run(State(task="Handle malformed finish", repo_path=repo))
+
+    assert state.status == "success"
+    assert any("Invalid finish action" in error for error in state.errors)
+    assert model.action_count == 2

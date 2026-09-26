@@ -1,4 +1,5 @@
 import pytest
+import subprocess
 from src.harness.orchestrator import Orchestrator
 from src.harness.state import State
 from src.harness.model.base import BaseModelClient
@@ -146,9 +147,14 @@ class MockFailThenPassRunner(TestRunner):
 
 def test_real_apply_patch_orchestration(tmp_path):
     repo = str(tmp_path)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
     file_path = os.path.join(repo, "test.txt")
     with open(file_path, "w") as f:
         f.write("Line 1\nLine 2\nLine 3\n")
+    subprocess.run(["git", "add", "test.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "initial"], cwd=repo, check=True)
 
     patch_content = "--- test.txt\n+++ test.txt\n@@ -1,3 +1,3 @@\n Line 1\n-Line 2\n+Line Two\n Line 3\n"
 
@@ -177,9 +183,14 @@ def test_real_apply_patch_orchestration(tmp_path):
 
 def test_real_recovery_file_change(tmp_path):
     repo = str(tmp_path)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
     file_path = os.path.join(repo, "test.txt")
     with open(file_path, "w") as f:
         f.write("Broken\n")
+    subprocess.run(["git", "add", "test.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "initial"], cwd=repo, check=True)
 
     model_actions = [
         {"action": "tool_call", "tool": "file_write", "arguments": {"path": "test.txt", "content": "Still Broken\n"}},
