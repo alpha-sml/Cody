@@ -8,14 +8,21 @@ from typing import List, Dict, Any, Optional
 def validate_action(action: Dict[str, Any]) -> Dict[str, Any]:
     action_type = action.get("action")
     if action_type == "tool_call":
-        if not isinstance(action.get("tool"), str) or not isinstance(action.get("arguments"), dict):
+        tool = action.get("tool")
+        args = action.get("arguments")
+        if not isinstance(tool, str) or not tool.strip() or not isinstance(args, dict):
             return {
                 "action": "error",
                 "error_type": "invalid_model_action",
-                "message": "tool_call requires string 'tool' and dict 'arguments'"
+                "message": "tool_call requires non-empty string 'tool' and dict 'arguments'"
             }
     elif action_type == "finish":
-        pass
+        if "result" not in action or not isinstance(action.get("result"), str):
+            return {
+                "action": "error",
+                "error_type": "invalid_model_action",
+                "message": "finish action requires a 'result' string"
+            }
     elif action_type == "error":
         if not isinstance(action.get("error_type"), str) or not isinstance(action.get("message"), str):
             return {
@@ -104,19 +111,41 @@ class GoogleClient(BaseModelClient):
             if response.status_code == 200:
                 data = response.json()
                 try:
-                    parts = data['candidates'][0]['content']['parts']
+                    candidates = data.get('candidates', [])
+                    if not candidates:
+                        return {"action": "error", "error_type": "model_api_error", "message": "No candidates in API response"}
+
+                    content = candidates[0].get('content', {})
+                    if not content:
+                        return {"action": "error", "error_type": "model_api_error", "message": "No content in API response"}
+
+                    parts = content.get('parts', [])
+                    if not parts:
+                        return {"action": "error", "error_type": "model_api_error", "message": "No parts in API response"}
+
                     for part in parts:
                         if 'functionCall' in part:
                             fc = part['functionCall']
+                            if not isinstance(fc, dict):
+                                return {"action": "error", "error_type": "model_api_error", "message": "Malformed functionCall structure"}
+
+                            args = fc.get("args")
+                            if args is None:
+                                args = {}
+
                             return validate_action({
                                 "action": "tool_call",
                                 "tool": fc.get("name"),
-                                "arguments": fc.get("args", {})
+                                "arguments": args
                             })
-                    text = parts[0]['text']
-                    return validate_action(extract_json(text))
-                except (KeyError, IndexError):
-                    return {"action": "error", "error_type": "model_api_error", "message": "Invalid response structure from API"}
+
+                    if 'text' in parts[0] and isinstance(parts[0]['text'], str):
+                        text = parts[0]['text']
+                        return validate_action(extract_json(text))
+
+                    return {"action": "error", "error_type": "model_api_error", "message": "No valid functionCall or text found"}
+                except (KeyError, IndexError, TypeError) as e:
+                    return {"action": "error", "error_type": "model_api_error", "message": f"Invalid response structure from API: {str(e)}"}
             else:
                 return {"action": "error", "error_type": "model_api_error", "message": f"API error: {response.status_code} {response.text}"}
         except requests.Timeout:
