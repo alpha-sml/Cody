@@ -460,3 +460,26 @@ def test_malformed_finish_action_is_controlled(tmp_path):
     assert state.status == "success"
     assert any("Invalid finish action" in error for error in state.errors)
     assert model.action_count == 2
+
+
+def test_mutating_task_without_actual_change_fails_verification(tmp_path):
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    main_py = tmp_path / "main.py"
+    main_py.write_text("same")
+    run_git(repo, "add", "main.py")
+    run_git(repo, "commit", "-m", "initial main.py")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {"action": "tool_call", "tool": "file_read", "arguments": {"path": "main.py"}},
+            {"action": "tool_call", "tool": "file_write", "arguments": {"path": "main.py", "content": "same"}},
+            {"action": "finish", "result": "done"}
+        ] * 3,
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+    state = orchestrator.run(State(task="Fix main.py", repo_path=repo))
+    assert state.status == "failed"
+    assert state.verification_results[0]["completion_status"] == "NO_MEANINGFUL_CHANGE"

@@ -119,6 +119,14 @@ class Orchestrator:
                 cody_files.add(path)
 
         if not cody_files:
+            mutating_tools = {"file_write", "apply_patch", "shell"}
+            has_mutating_action = any(
+                entry.get("tool") in mutating_tools
+                for entry in state.tool_history
+            )
+            if has_mutating_action:
+                return "NO_MEANINGFUL_CHANGE"
+
             evidence_tools = {"file_read", "file_search", "git_status", "git_diff"}
             has_task_evidence = any(
                 entry.get("tool") in evidence_tools

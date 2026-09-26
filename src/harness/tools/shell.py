@@ -23,13 +23,18 @@ class ShellTool(BaseTool):
 
     def execute(self, command: str, **kwargs: Any) -> Dict[str, Any]:
         try:
+            import os
+            env = os.environ.copy()
+            env.pop("AI_API_KEY", None)
+
             result = subprocess.run(
                 command,
                 shell=True,
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
+                env=env
             )
 
             stdout = _bounded_output(result.stdout)

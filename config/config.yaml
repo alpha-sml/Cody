@@ -1,6 +1,6 @@
 model:
-  name: "gemini-pro"
-  provider: "google"
+  name: "<CONFIRMED_DEEPSEEK_MODEL>"
+  provider: "deepseek"
   max_tokens: 8192
 
 agent:

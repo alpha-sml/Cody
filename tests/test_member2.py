@@ -4,7 +4,7 @@ import requests
 from unittest.mock import patch
 from src.harness.model.boundary import extract_json
 from src.harness.model.providers.mock import MockClient
-from src.harness.model.providers.google import GoogleClient
+from src.harness.model.providers.deepseek import DeepSeekClient
 from src.harness.tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool, safe_path
 from src.harness.tools.shell import ShellTool
 from src.harness.tools.git import GitStatusTool, GitDiffTool
@@ -31,7 +31,7 @@ def test_extract_json_fences():
     assert res4["error_type"] == "invalid_model_response"
 
 def test_api_failure_behavior():
-    client = GoogleClient("fake_key", "gemini-pro")
+    client = DeepSeekClient("fake_key", "deepseek-chat")
 
     # 1. Timeout
     with patch("requests.post", side_effect=requests.Timeout):
@@ -53,7 +53,7 @@ def test_api_failure_behavior():
         status_code = 200
         def json(self):
             return {
-                "candidates": [{"content": {"parts": [{"text": '{"action": "tool_call", "tool": "test", "arguments": {}}'}]}}]
+                "choices": [{"message": {"tool_calls": [{"type": "function", "function": {"name": "test", "arguments": "{}"}}]}}]
             }
     with patch("requests.post", return_value=MockValidResponse()):
         res = client.generate("test prompt")
@@ -64,12 +64,12 @@ def test_api_failure_behavior():
         status_code = 200
         def json(self):
             return {
-                "candidates": [{"content": {"parts": [{"text": '{"action": "tool_call"}'}]}}]
+                "choices": [{"message": {"invalid_key": "here"}}]
             }
     with patch("requests.post", return_value=MockInvalidResponse()):
         res = client.generate("test prompt")
         assert res["action"] == "error"
-        assert res["error_type"] == "invalid_model_action"
+        assert res["error_type"] == "model_api_error"
 
 def test_mock_client_accepts_tools():
     client = MockClient()
@@ -250,80 +250,6 @@ def test_model_validation():
     # tool_call arguments not dict
     res = validate_action({"action": "tool_call", "tool": "test", "arguments": []})
     assert res["action"] == "error"
-
-def test_google_client_malformed_responses():
-    client = GoogleClient("fake", "gemini-pro")
-
-    def _mock_post(json_data):
-        class MockResponse:
-            status_code = 200
-            def json(self): return json_data
-        return MockResponse()
-
-    # missing candidates
-    with patch("requests.post", return_value=_mock_post({})):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "No candidates" in res["message"]
-
-    # empty candidates
-    with patch("requests.post", return_value=_mock_post({"candidates": []})):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "No candidates" in res["message"]
-
-    # missing content
-    with patch("requests.post", return_value=_mock_post({"candidates": [{}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "No content" in res["message"]
-
-    # empty/missing parts
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"role": "model"}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "No parts" in res["message"]
-
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": []}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "No parts" in res["message"]
-
-    # part with neither functionCall nor valid text
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"empty": "part"}]}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "No valid functionCall or text" in res["message"]
-
-    # functionCall that is not a dict
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": "not dict"}]}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "Malformed functionCall structure" in res["message"]
-
-    # functionCall with missing name
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": {"args": {}}}]}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "non-empty string" in res["message"]
-
-    # functionCall with empty name
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": {"name": "", "args": {}}}]}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "non-empty string" in res["message"]
-
-    # functionCall with args that are not a dict
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": {"name": "test", "args": []}}]}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "dict 'arguments'" in res["message"]
-
-    # malformed/unexpected response structure (e.g. text is not a string)
-    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"text": 123}]}}] })):
-        res = client.generate("test")
-        assert res["action"] == "error"
-        assert "No valid functionCall or text found" in res["message"]
 
 def test_recovery_validation_extended():
     class CapturingModel(MockClient):

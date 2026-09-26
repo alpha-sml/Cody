@@ -163,3 +163,14 @@ def test_repo_tree_generates_tree_for_valid_depth(tmp_path):
     assert result["status"] == "success"
     assert str(tmp_path / "nested") in result["tree"]
     assert str(tmp_path / "nested" / "file.txt") in result["tree"]
+
+
+def test_shell_tool_strips_ai_api_key(tmp_path):
+    os.environ["AI_API_KEY"] = "secret-key-123"
+    try:
+        shell_tool = ShellTool(str(tmp_path))
+        res = shell_tool.execute(command="env")
+        assert "secret-key-123" not in res["stdout"]
+        assert "AI_API_KEY=" not in res["stdout"]
+    finally:
+        os.environ.pop("AI_API_KEY", None)
