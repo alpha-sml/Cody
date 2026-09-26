@@ -148,6 +148,7 @@ def test_file_write_flow_verifies_and_tracks_changed_file(tmp_path):
     assert state.status == "success"
     assert (tmp_path / "created.txt").read_text() == "created"
     assert state.changed_files == ["created.txt"]
+    assert state.verification_results[0]["completion_status"] == "VERIFIED_SUCCESS"
     assert verifier.test_runner.calls == 1
 
 
@@ -170,6 +171,7 @@ def test_apply_patch_flow_changes_file_and_verifies(tmp_path):
     assert state.status == "success"
     assert target.read_text() == "after\n"
     assert state.changed_files == ["tracked.txt"]
+    assert state.verification_results[0]["completion_status"] == "VERIFIED_SUCCESS"
 
 
 def test_tool_failure_records_error_and_returns_to_plan(tmp_path):
@@ -204,6 +206,7 @@ def test_verification_failure_enters_recovery(tmp_path):
     assert state.status == "failed"
     assert state.recovery_attempts == 1
     assert verifier.test_runner.calls == 2
+    assert state.verification_results[0]["completion_status"] == "TEST_FAILURE"
 
 
 def test_recovery_success_runs_verification_again(tmp_path):
@@ -228,6 +231,8 @@ def test_recovery_success_runs_verification_again(tmp_path):
     assert state.recovery_attempts == 1
     assert verifier.test_runner.calls == 2
     assert target.read_text() == "fixed"
+    assert state.verification_results[0]["completion_status"] == "TEST_FAILURE"
+    assert state.verification_results[1]["completion_status"] == "VERIFIED_SUCCESS"
 
 
 def test_multiple_tracked_and_untracked_changes_are_preserved(tmp_path):
@@ -348,6 +353,7 @@ def test_preexisting_change_is_not_attributed_to_cody(tmp_path):
     assert state.status == "success"
     assert state.changed_files == ["user.txt", "cody.txt"]
     assert state.baseline_repository["changed_files"] == ["user.txt"]
+    assert state.verification_results[0]["completion_status"] == "VERIFIED_SUCCESS"
 
 
 def test_unexpected_change_is_rejected(tmp_path):

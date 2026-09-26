@@ -13,8 +13,15 @@ A strong, reliable, and extensible MVP architecture for an autonomous coding age
 
 ## Setup
 ```bash
-export AI_API_KEY="your-key"
 make setup
+```
+
+Run commands from the repository root. The default configuration is loaded from
+`config/config.yaml` and uses `make test` for verification. For a live provider,
+set the configured provider's required credentials before starting the harness:
+
+```bash
+export AI_API_KEY="your-key"
 ```
 
 ## Running
@@ -23,8 +30,13 @@ make run ARGS="--task 'Add new route'"
 ```
 Or directly:
 ```bash
-python -m src.harness.main --task "Fix authentication bug"
+PYTHONPATH=. ./venv/bin/python -m src.harness.main --task "Fix authentication bug"
 ```
+
+`make run` passes `ARGS` directly to the CLI. The supported task input is the
+required `--task` option; `--repo PATH` optionally selects the repository being
+worked on. The received task is placed into the initial `State` and follows the
+normal planner, execution, verification, recovery, and completion-gate path.
 
 ## Testing
 ```bash
@@ -37,5 +49,11 @@ To test locally without an API key, use the deterministic mock model:
 MOCK_MODEL=true make run ARGS="--task 'test_write'"
 ```
 
+Mock mode avoids provider credentials and is deterministic for local smoke tests.
+
 ## Configuration
 `config/config.yaml` contains limits for iterations, recovery attempts, and model selection.
+Successful completion requires passing verification plus repository evidence of
+the task, such as an expected tracked or untracked change. Pre-existing changes
+are captured as the baseline and are not attributed to Cody; unexpected changes
+or missing meaningful evidence route through recovery instead of declaring success.
