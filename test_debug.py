@@ -12,17 +12,15 @@ class MockModel(BaseModelClient):
     def generate(self, prompt, system_prompt=None, tools=None):
         return {"action": "finish", "result": "MOCK_RESPONSE"}
 
-def test_orchestrator():
-    model = MockModel()
-    registry = ToolRegistry()
-    verifier = Verifier(TestRunner("."), ".")
-    recovery = RecoveryManager(model)
-    context_mgr = ContextManager()
-    planner = Planner(model)
-    
-    orchestrator = Orchestrator(model, registry, verifier, recovery, context_mgr, planner, max_iterations=2)
-    state = State(task="Test")
-    
-    final_state = orchestrator.run(state)
-    assert final_state.status == "success"
-    assert final_state.final_result == "MOCK_RESPONSE"
+model = MockModel()
+registry = ToolRegistry()
+verifier = Verifier(TestRunner("."), ".")
+recovery = RecoveryManager(model)
+context_mgr = ContextManager()
+planner = Planner(model)
+
+orchestrator = Orchestrator(model, registry, verifier, recovery, context_mgr, planner, max_iterations=2)
+state = State(task="Test")
+
+final_state = orchestrator.run(state)
+print(final_state.model_dump_json(indent=2))

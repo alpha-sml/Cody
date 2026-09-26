@@ -1,24 +1,29 @@
-# AI Coding Harness Base
+# Cody: Autonomous AI Coding Harness (Hackathon MVP)
 
 ## Purpose
-A strong, extensible base repository for building an autonomous coding agent harness around a foundation model during a hackathon.
+A strong, reliable, and extensible MVP architecture for an autonomous coding agent harness. Designed to be the foundation for the AI Coding Harness Hackathon.
 
 ## Architecture
-The harness features an Orchestrator loop communicating with a Foundation Model. It manages Context, executes Tools, Verifies changes via tests, and invokes a Recovery module if tests fail.
+- **State**: Typed state tracking tasks, plans, and history.
+- **Orchestrator**: A state-machine loop (Initialize → Plan → Execute → Verify → Recover).
+- **Tools**: Workspace-bounded tools (`file_write`, `file_read`, `shell`, `git_diff`).
+- **Context Manager**: Structured context maintenance (avoids huge whole-repo dumps).
+- **Verifier**: First-class verification via actual tool execution (`make test`).
+- **Recovery Manager**: Captures test failures and triggers replanning loop.
 
-## Installation
+## Setup
 ```bash
-export AI_API_KEY="..." # Your API Key
+export AI_API_KEY="your-key"
 make setup
 ```
 
 ## Running
 ```bash
-make run
+make run ARGS="--task 'Add new route'"
 ```
-You can also run directly with arguments:
+Or directly:
 ```bash
-./venv/bin/python -m src.harness.main --repo . --task "Add a new feature"
+python -m src.harness.main --task "Fix authentication bug"
 ```
 
 ## Testing
@@ -26,11 +31,11 @@ You can also run directly with arguments:
 make test
 ```
 
-## Configuration
-See `config/config.yaml` to change model or agent limits.
+## Mock Mode
+To test locally without an API key, use the deterministic mock model:
+```bash
+MOCK_MODEL=true make run ARGS="--task 'test_write'"
+```
 
-## Extensions for Hackathon
-- Improve context management (chunking, RAG)
-- Expand toolset
-- Enhance model prompt parsing
-- Refine recovery strategies
+## Configuration
+`config/config.yaml` contains limits for iterations, recovery attempts, and model selection.

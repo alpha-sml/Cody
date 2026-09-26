@@ -1,4 +1,5 @@
 from typing import Dict, Any
+import json
 from ..model.base import BaseModelClient
 from ..state import State
 
@@ -7,7 +8,14 @@ class RecoveryManager:
         self.model_client = model_client
 
     def recover(self, state: State, failure_details: Dict[str, Any]) -> str:
-        # Ask model to generate a recovery plan based on failure
-        prompt = f"Tests failed. Details: {failure_details}\nUpdate plan to fix."
+        prompt = (
+            f"Tests failed during verification. Please provide a corrective plan.\n"
+            f"Failure Details:\n{json.dumps(failure_details, indent=2)}\n"
+            f"Update the plan to fix this."
+        )
         response = self.model_client.generate(prompt)
-        return response
+        
+        if response.get("action") == "tool_call" or "result" in response:
+            return response.get("result", "Recovery plan generated (structured action received)")
+            
+        return "Apply fix based on failure"

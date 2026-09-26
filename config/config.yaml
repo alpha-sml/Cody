@@ -5,4 +5,5 @@ model:
 
 agent:
   max_iterations: 15
-  timeout_seconds: 300
+  timeout_seconds: 60
+  max_recovery_attempts: 3

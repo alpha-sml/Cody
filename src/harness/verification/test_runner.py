@@ -12,7 +12,7 @@ class TestRunner:
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=120
             )
             return {
                 "status": "success",
@@ -20,5 +20,7 @@ class TestRunner:
                 "stderr": result.stderr,
                 "exit_code": result.returncode
             }
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "error": "Test run timed out", "exit_code": -1}
         except Exception as e:
             return {"status": "error", "error": str(e), "exit_code": -1}
