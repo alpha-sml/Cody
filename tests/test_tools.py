@@ -23,5 +23,16 @@ def test_shell_tool(tmp_path):
 
 def test_safe_path(tmp_path):
     repo_path = str(tmp_path)
+    
+    # Normal file
+    safe_path(repo_path, "inside.txt")
+    
+    # Directory traversal out
     with pytest.raises(ValueError):
         safe_path(repo_path, "../outside.txt")
+        
+    # Sibling directory prefix
+    sibling_path = str(tmp_path) + "_sibling"
+    os.makedirs(sibling_path, exist_ok=True)
+    with pytest.raises(ValueError):
+        safe_path(repo_path, "../" + os.path.basename(sibling_path) + "/outside.txt")

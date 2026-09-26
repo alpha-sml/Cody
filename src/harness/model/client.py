@@ -1,16 +1,44 @@
 import os
 import json
+import re
+import requests
 from .base import BaseModelClient
 from typing import List, Dict, Any, Optional
 
 def extract_json(text: str) -> Dict[str, Any]:
-    # Robust json extraction
+    # Robust json extraction using regex
+    try:
+        matches = re.finditer(r'\{(?:[^{}]|(?R))*\}', text)
+        # Using a simpler regex that matches { ... } broadly, then loads.
+        # Since Python re doesn't have recursive matching (?R), we just find outer braces manually
+        stack = []
+        start = -1
+        last_json = None
+        for i, char in enumerate(text):
+            if char == '{':
+                if not stack:
+                    start = i
+                stack.append(char)
+            elif char == '}':
+                if stack:
+                    stack.pop()
+                    if not stack:
+                        try:
+                            last_json = json.loads(text[start:i+1])
+                        except:
+                            pass
+        if last_json:
+            return last_json
+    except Exception:
+        pass
+    
+    # Fallback to simple outer braces
     try:
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end != -1 and end >= start:
             return json.loads(text[start:end+1])
-    except Exception:
+    except:
         pass
     return {"action": "finish", "result": "Failed to parse json", "raw_response": text}
 
@@ -35,10 +63,29 @@ class GoogleClient(BaseModelClient):
         self.model_name = model_name
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        # Mocking actual API call since we can't really make one in this hackathon scaffold
-        # Assume an actual API call is made and a string is returned
-        response_text = '{"action": "finish", "result": "Implement real API call here"}'
-        return extract_json(response_text)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
+        
+        contents = []
+        if system_prompt:
+            contents.append({"role": "user", "parts": [{"text": "SYSTEM: " + system_prompt}]})
+        
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+        
+        payload = {"contents": contents}
+        
+        try:
+            response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
+            if response.status_code == 200:
+                data = response.json()
+                try:
+                    text = data['candidates'][0]['content']['parts'][0]['text']
+                    return extract_json(text)
+                except (KeyError, IndexError):
+                    return {"action": "finish", "result": "API error: Invalid response structure"}
+            else:
+                return {"action": "finish", "result": f"API error: {response.status_code} {response.text}"}
+        except Exception as e:
+            return {"action": "finish", "result": f"API exception: {str(e)}"}
 
 def get_client(model_name: str) -> BaseModelClient:
     is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true"

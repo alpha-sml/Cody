@@ -40,7 +40,7 @@ class ShellTool(BaseTool):
         except Exception as e:
             return {"status": "error", "error": str(e), "exit_code": -1}
 
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object", 
             "properties": {

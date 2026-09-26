@@ -4,10 +4,10 @@ import subprocess
 from typing import Dict, Any, Optional
 
 def safe_path(repo_path: str, target: str) -> str:
-    # Ensure target is within repo_path
+    # Ensure target is within repo_path using commonpath to prevent sibling dir traversal
     abs_repo = os.path.abspath(repo_path)
     abs_target = os.path.abspath(os.path.join(repo_path, target))
-    if not abs_target.startswith(abs_repo):
+    if os.path.commonpath([abs_repo, abs_target]) != abs_repo:
         raise ValueError(f"Path {target} is outside workspace {repo_path}")
     return abs_target
 
@@ -35,7 +35,7 @@ class FileReadTool(BaseTool):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object", 
             "properties": {
@@ -63,7 +63,7 @@ class FileWriteTool(BaseTool):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object", 
             "properties": {
@@ -95,7 +95,7 @@ class FileSearchTool(BaseTool):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object", 
             "properties": {
@@ -121,7 +121,7 @@ class RepoTreeTool(BaseTool):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object", 
             "properties": {

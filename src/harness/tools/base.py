@@ -10,5 +10,12 @@ class BaseTool(ABC):
         pass
 
     @abstractmethod
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         pass
+
+    def schema(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.get_parameters_schema()
+        }

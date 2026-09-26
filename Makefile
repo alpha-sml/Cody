@@ -3,7 +3,7 @@ setup:
 	./venv/bin/pip install -r requirements.txt
 
 run:
-	PYTHONPATH=. ./venv/bin/python -m src.harness.main
+	PYTHONPATH=. ./venv/bin/python -m src.harness.main $(ARGS)
 
 test:
 	PYTHONPATH=. ./venv/bin/pytest tests/

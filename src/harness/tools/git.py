@@ -16,7 +16,7 @@ class GitStatusTool(BaseTool):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}}
 
 class GitDiffTool(BaseTool):
@@ -36,5 +36,5 @@ class GitDiffTool(BaseTool):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def schema(self) -> Dict[str, Any]:
+    def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}}
