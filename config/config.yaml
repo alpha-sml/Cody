@@ -1,5 +1,5 @@
 model:
-  name: "<CONFIRMED_DEEPSEEK_MODEL>"
+  name: "deepseek-chat"
   provider: "deepseek"
   max_tokens: 8192
 

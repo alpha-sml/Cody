@@ -1,4 +1,5 @@
 from .base import BaseTool, ToolResult
+from .env import sanitized_env
 import subprocess
 from typing import Any, Dict
 
@@ -11,7 +12,7 @@ class GitStatusTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> ToolResult:
         try:
-            result = subprocess.run(["git", "status"], cwd=self.repo_path, capture_output=True, text=True)
+            result = subprocess.run(["git", "status"], cwd=self.repo_path, capture_output=True, text=True, env=sanitized_env())
             if result.returncode != 0:
                 error = result.stderr.strip() or f"git status failed with exit code {result.returncode}"
                 return self.error_result(
@@ -36,7 +37,7 @@ class GitDiffTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> ToolResult:
         try:
-            result = subprocess.run(["git", "diff"], cwd=self.repo_path, capture_output=True, text=True)
+            result = subprocess.run(["git", "diff"], cwd=self.repo_path, capture_output=True, text=True, env=sanitized_env())
             output = result.stdout
             if len(output) > 10000:
                 output = output[:10000] + "\n...[TRUNCATED DIFF]"

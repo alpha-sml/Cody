@@ -215,51 +215,104 @@ def test_qwen_client_malformed_response():
     assert action["error_type"] == "model_api_error"
 
 import os
-from src.harness.model.client import get_client
+from src.harness.model.client import get_client, validate_model_name
 from src.harness.model.providers.mock import MockClient
 
-def test_get_client_default():
-    # Should default to deepseek
-    os.environ["DEEPSEEK_API_KEY"] = "fake"
-    client = get_client("model_name")
-    assert isinstance(client, DeepSeekClient)
-    assert client.api_key == "fake"
-    os.environ.pop("DEEPSEEK_API_KEY", None)
 
-def test_get_client_explicit_deepseek():
-    os.environ["DEEPSEEK_API_KEY"] = "ds_key"
-    client = get_client("model_name", "deepseek")
+@pytest.fixture(autouse=True)
+def clean_env_for_client_tests():
+    """Ensure no leaked env vars between tests."""
+    keys = ["AI_API_KEY", "DEEPSEEK_API_KEY", "QWEN_API_KEY", "CODY_PROVIDER", "CODY_MODEL", "MOCK_MODEL"]
+    saved = {k: os.environ.pop(k, None) for k in keys}
+    yield
+    for k, v in saved.items():
+        if v is not None:
+            os.environ[k] = v
+        else:
+            os.environ.pop(k, None)
+
+
+def test_get_client_with_ai_api_key():
+    """AI_API_KEY is the primary credential (evaluator interface)."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    client = get_client("deepseek-chat", "deepseek")
     assert isinstance(client, DeepSeekClient)
-    assert client.api_key == "ds_key"
-    os.environ.pop("DEEPSEEK_API_KEY", None)
+    assert client.api_key == "eval-key"
+
+
+def test_get_client_ai_api_key_takes_priority():
+    """AI_API_KEY takes priority over provider-specific keys."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    os.environ["DEEPSEEK_API_KEY"] = "ds-key"
+    client = get_client("deepseek-chat", "deepseek")
+    assert client.api_key == "eval-key"
+
+
+def test_get_client_provider_key_fallback():
+    """Provider-specific key works when AI_API_KEY is absent."""
+    os.environ["DEEPSEEK_API_KEY"] = "ds-key"
+    client = get_client("deepseek-chat", "deepseek")
+    assert isinstance(client, DeepSeekClient)
+    assert client.api_key == "ds-key"
+
 
 def test_get_client_explicit_qwen():
-    os.environ["QWEN_API_KEY"] = "qw_key"
-    client = get_client("model_name", "qwen")
+    os.environ["QWEN_API_KEY"] = "qw-key"
+    client = get_client("qwen-max", "qwen")
     assert isinstance(client, QwenClient)
-    assert client.api_key == "qw_key"
-    os.environ.pop("QWEN_API_KEY", None)
+    assert client.api_key == "qw-key"
+
 
 def test_get_client_explicit_mock():
-    client = get_client("model_name", "mock")
+    client = get_client("any-model", "mock")
     assert isinstance(client, MockClient)
 
+
 def test_get_client_case_insensitive():
-    os.environ["QWEN_API_KEY"] = "qw_key"
-    client = get_client("model_name", " QWEN ")
+    os.environ["QWEN_API_KEY"] = "qw-key"
+    client = get_client("qwen-max", " QWEN ")
     assert isinstance(client, QwenClient)
-    assert client.api_key == "qw_key"
-    os.environ.pop("QWEN_API_KEY", None)
+
 
 def test_get_client_unsupported():
-    # Should reject unsupported provider even when no API key exists
     with pytest.raises(ValueError, match="Unknown provider"):
-        get_client("model_name", "unsupported")
+        get_client("model", "unsupported")
 
-def test_get_client_ai_api_key_fallback():
-    # Should fallback to AI_API_KEY
-    os.environ["AI_API_KEY"] = "fallback"
-    client = get_client("model_name", "deepseek")
-    assert isinstance(client, DeepSeekClient)
-    assert client.api_key == "fallback"
-    os.environ.pop("AI_API_KEY", None)
+
+def test_get_client_missing_credentials():
+    """Clear error when no API key is set."""
+    with pytest.raises(ValueError, match="No API key found"):
+        get_client("deepseek-chat", "deepseek")
+
+
+def test_validate_model_name_rejects_placeholder():
+    """Placeholder model names must fail fast."""
+    with pytest.raises(ValueError, match="placeholder"):
+        validate_model_name("<CONFIRMED_DEEPSEEK_MODEL>")
+
+
+def test_validate_model_name_rejects_empty():
+    with pytest.raises(ValueError, match="empty"):
+        validate_model_name("")
+
+
+def test_validate_model_name_accepts_real():
+    assert validate_model_name("deepseek-chat") == "deepseek-chat"
+
+
+def test_get_client_env_overrides(monkeypatch):
+    """CODY_PROVIDER and CODY_MODEL env vars override arguments."""
+    os.environ["AI_API_KEY"] = "key"
+    os.environ["CODY_PROVIDER"] = "mock"
+    client = get_client("deepseek-chat", "deepseek")
+    assert isinstance(client, MockClient)
+
+
+def test_credentials_never_logged(capsys):
+    """API key value must never appear in stdout/stderr."""
+    os.environ["AI_API_KEY"] = "super-secret-key-12345"
+    client = get_client("deepseek-chat", "deepseek")
+    output = capsys.readouterr()
+    assert "super-secret-key-12345" not in output.out
+    assert "super-secret-key-12345" not in output.err
+

@@ -24,12 +24,14 @@ class Verifier:
         errors = []
 
         try:
+            from ..tools.env import sanitized_env
             status_res = subprocess.run(
                 ["git", "status", "--porcelain", "--untracked-files=all"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
                 check=True,
+                env=sanitized_env(),
             )
             status_lines = status_res.stdout.splitlines()
             for line in status_lines:

@@ -38,13 +38,15 @@ class TestRunner:
     def run_tests(self) -> Dict[str, Any]:
         cmd_str = self._discover_test_command()
         try:
+            from ..tools.env import sanitized_env
             cmd = shlex.split(cmd_str)
             result = subprocess.run(
                 cmd,
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
+                env=sanitized_env()
             )
             return {
                 "status": "success",

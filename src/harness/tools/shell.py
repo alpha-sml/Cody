@@ -23,11 +23,8 @@ class ShellTool(BaseTool):
 
     def execute(self, command: str, **kwargs: Any) -> Dict[str, Any]:
         try:
-            import os
-            env = os.environ.copy()
-            env.pop("DEEPSEEK_API_KEY", None)
-            env.pop("QWEN_API_KEY", None)
-            env.pop("AI_API_KEY", None)
+            from .env import sanitized_env
+            env = sanitized_env()
 
             result = subprocess.run(
                 command,

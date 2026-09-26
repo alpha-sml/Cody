@@ -1,11 +1,101 @@
-from typing import List
+from typing import List, Optional
 from .state import State
 from .model.base import BaseModelClient
 import json
 
+class PlanStep:
+    """Single step in a structured plan."""
+    __slots__ = ("id", "description", "files", "verification", "status")
+
+    def __init__(self, id: str, description: str, files: Optional[List[str]] = None,
+                 verification: Optional[List[str]] = None):
+        self.id = id
+        self.description = description
+        self.files = files or []
+        self.verification = verification or []
+        self.status = "pending"
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "description": self.description,
+            "files": self.files,
+            "verification": self.verification,
+            "status": self.status,
+        }
+
+class StructuredPlan:
+    """Structured plan with goal and typed steps."""
+    def __init__(self, goal: str, steps: Optional[List[PlanStep]] = None):
+        self.goal = goal
+        self.steps = steps or []
+        self._current_index = 0
+
+    @property
+    def current_step(self) -> Optional[PlanStep]:
+        if self._current_index < len(self.steps):
+            return self.steps[self._current_index]
+        return None
+
+    @property
+    def completed_steps(self) -> List[PlanStep]:
+        return [s for s in self.steps if s.status == "completed"]
+
+    @property
+    def expected_files(self) -> List[str]:
+        files = []
+        for s in self.steps:
+            files.extend(s.files)
+        return list(set(files))
+
+    def advance(self):
+        if self.current_step:
+            self.current_step.status = "completed"
+            self._current_index += 1
+
+    def to_dict(self) -> dict:
+        return {
+            "goal": self.goal,
+            "steps": [s.to_dict() for s in self.steps],
+            "current_step_index": self._current_index,
+        }
+
+    def to_step_list(self) -> List[str]:
+        """Backward-compatible: return list of step description strings."""
+        return [s.description for s in self.steps]
+
+
+def _parse_structured_plan(response_text: str, goal: str) -> StructuredPlan:
+    """Try to parse JSON structured plan from model response. Falls back to line-split."""
+    try:
+        data = json.loads(response_text) if response_text.strip().startswith("{") else None
+    except json.JSONDecodeError:
+        data = None
+
+    if isinstance(data, dict) and "steps" in data:
+        steps = []
+        for i, step_data in enumerate(data["steps"]):
+            if isinstance(step_data, dict):
+                steps.append(PlanStep(
+                    id=str(step_data.get("id", i + 1)),
+                    description=step_data.get("description", ""),
+                    files=step_data.get("files", []),
+                    verification=step_data.get("verification", []),
+                ))
+            elif isinstance(step_data, str):
+                steps.append(PlanStep(id=str(i + 1), description=step_data))
+        return StructuredPlan(goal=data.get("goal", goal), steps=steps)
+
+    # Fallback: line-split for backward compatibility
+    lines = [line.strip() for line in response_text.strip().split("\n") if line.strip()]
+    steps = [PlanStep(id=str(i + 1), description=line) for i, line in enumerate(lines)]
+    return StructuredPlan(goal=goal, steps=steps)
+
+
 class Planner:
     def __init__(self, model_client: BaseModelClient):
         self.model_client = model_client
+        self._plan: Optional[StructuredPlan] = None
 
     def update_plan(self, state: State) -> List[str]:
         prompt = (
@@ -33,4 +123,10 @@ class Planner:
         if not plan_str:
             raise ValueError("Planner returned an empty plan.")
 
-        return plan_str.split("\n")
+        self._plan = _parse_structured_plan(plan_str, goal=state.task)
+
+        return self._plan.to_step_list()
+
+    @property
+    def structured_plan(self) -> Optional[StructuredPlan]:
+        return self._plan

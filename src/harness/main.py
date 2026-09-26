@@ -1,8 +1,10 @@
 import argparse
 import json
+import os
+import select
 import sys
 from .config import load_config
-from .state import State
+from .state import State, TaskSpec
 from .model.client import get_client
 from .tools.registry import ToolRegistry
 from .tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool
@@ -15,17 +17,76 @@ from .context.context_manager import ContextManager
 from .planner import Planner
 from .orchestrator import Orchestrator
 
+_STDIN_TIMEOUT = 300  # seconds to wait for evaluator input
+
+
+def _read_task_from_stdin(timeout: int = _STDIN_TIMEOUT) -> str:
+    """Read task from stdin with timeout. Non-blocking on TTY."""
+    if sys.stdin.isatty():
+        print("Cody is ready. Enter task description (end with Ctrl-D or empty line):")
+    else:
+        # Piped input — read immediately
+        pass
+
+    lines = []
+    try:
+        # For piped input, just read all
+        if not sys.stdin.isatty():
+            task = sys.stdin.read().strip()
+            return task
+
+        # Interactive — read lines until empty line or EOF
+        while True:
+            ready, _, _ = select.select([sys.stdin], [], [], timeout)
+            if not ready:
+                break
+            line = sys.stdin.readline()
+            if not line:  # EOF
+                break
+            if line.strip() == "":
+                break
+            lines.append(line)
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+    return "".join(lines).strip()
+
+
+def _resolve_task(args) -> TaskSpec:
+    """Resolve task from CLI args, env var, or stdin. Returns TaskSpec."""
+    task_text = ""
+    source = "cli"
+
+    if args.task:
+        task_text = args.task
+        source = "cli"
+    elif os.environ.get("CODY_TASK", "").strip():
+        task_text = os.environ["CODY_TASK"].strip()
+        source = "env"
+    else:
+        task_text = _read_task_from_stdin()
+        source = "stdin"
+
+    if not task_text:
+        print("Error: No task provided. Supply via --task, CODY_TASK env var, or stdin.")
+        sys.exit(1)
+
+    return TaskSpec(
+        title=task_text.split("\n")[0][:200],
+        description=task_text,
+        source=source,
+    )
+
+
 def main():
-    parser = argparse.ArgumentParser(description="AI Coding Harness MVP")
-    parser.add_argument("--repo", type=str, default=".", help="Path to repository")
+    parser = argparse.ArgumentParser(description="Cody AI Coding Harness")
+    parser.add_argument("--repo", type=str, default=".", help="Path to target repository")
     parser.add_argument("--task", type=str, default="", help="Coding task description")
     parser.add_argument("--provider", type=str, default="", help="Override model provider (e.g. deepseek, qwen)")
     parser.add_argument("--model", type=str, default="", help="Override model ID")
     args = parser.parse_args()
 
-    if not args.task:
-        print("Error: --task argument is required.")
-        sys.exit(1)
+    task_spec = _resolve_task(args)
 
     config = load_config()
 
@@ -66,7 +127,8 @@ def main():
     )
 
     state = State(
-        task=args.task,
+        task=task_spec.description,
+        task_spec=task_spec,
         repo_path=args.repo,
         evaluation_report={
             "model_provider": provider,
@@ -74,7 +136,7 @@ def main():
         },
     )
 
-    print(f"Starting harness for task: {args.task}")
+    print(f"Starting harness for task: {task_spec.summary}")
     final_state = orchestrator.run(state)
     print(f"Finished with status: {final_state.status}")
     print(f"Final Result: {final_state.final_result}")
