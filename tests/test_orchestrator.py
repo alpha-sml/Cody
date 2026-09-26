@@ -50,6 +50,17 @@ class MockPlanner(Planner):
     def update_plan(self, state):
         return ["mock plan step"]
 
+
+class FailingPlanner(Planner):
+    def __init__(self, model_client, message="planner failed"):
+        super().__init__(model_client)
+        self.message = message
+        self.calls = 0
+
+    def update_plan(self, state):
+        self.calls += 1
+        raise ValueError(self.message)
+
 def setup_orchestrator(model_actions, verifier_succeed_on=1, max_iterations=15, max_recovery=2, tool_succeeds=True):
     model = MockModel(model_actions)
     registry = ToolRegistry()
@@ -178,3 +189,36 @@ def test_repo_tree_failure_is_recorded_and_does_not_crash():
     assert final_state.status == "success"
     assert "Mock tool failed" in final_state.errors
     assert "Mock tool failed" in orch.context_manager.errors
+
+
+def test_planner_value_error_is_recorded_and_enters_controlled_recovery():
+    orch, model = setup_orchestrator([{"action": "finish", "result": "recovered"}])
+    planner = FailingPlanner(model, "malformed planner response")
+    orch.planner = planner
+
+    final_state = orch.run(State(task="Test"))
+
+    assert final_state.status == "success"
+    assert final_state.recovery_attempts == 1
+    assert final_state.iteration == 1
+    assert "Planner update failed: malformed planner response" in final_state.errors
+    assert "Planner update failed: malformed planner response" in orch.context_manager.errors
+    assert planner.calls == 1
+
+
+def test_repeated_planner_failures_respect_recovery_limit():
+    orch, model = setup_orchestrator(
+        [{"action": "error", "message": "recovery unavailable"}] * 3,
+        max_recovery=2,
+    )
+    planner = FailingPlanner(model)
+    orch.planner = planner
+
+    final_state = orch.run(State(task="Test"))
+
+    assert final_state.status == "failed"
+    assert final_state.final_result == "Max recovery attempts reached."
+    assert final_state.recovery_attempts == 2
+    assert final_state.iteration == 2
+    assert planner.calls == 3
+    assert final_state.errors.count("Planner update failed: planner failed") == 3

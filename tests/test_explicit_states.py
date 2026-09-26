@@ -42,6 +42,10 @@ class ExplicitPlanner(Planner):
     def update_plan(self, state):
         return ["mock plan step"]
 
+class FailingPlanner(Planner):
+    def update_plan(self, state):
+        raise ValueError("planner model failure")
+
 def test_recovery_state_machine_path():
     """
     Proves: broken file -> model tool_call -> verification failure -> RECOVER -> recovery tool_call executes through ToolRegistry -> VERIFY -> SUCCESS
@@ -98,6 +102,26 @@ def test_finish_action_state_machine_path():
     assert final_state.final_result == "done"
     assert len(final_state.verification_results) == 1
     assert final_state.verification_results[0]["verified"] is True
+
+def test_planner_failure_returns_to_controlled_recovery():
+    model = ExplicitModel([{"action": "finish", "result": "recovered"}])
+    registry = ToolRegistry()
+    class RepoTreeMock(ExplicitMockTool):
+        name = "repo_tree"
+    registry.register(RepoTreeMock())
+    verifier = ExplicitVerifier(succeed_on_call=1)
+    recovery = RecoveryManager(model)
+    context_mgr = ContextManager()
+    planner = FailingPlanner(model)
+
+    orchestrator = Orchestrator(model, registry, verifier, recovery, context_mgr, planner)
+    final_state = orchestrator.run(State(task="Test"))
+
+    assert final_state.status == "success"
+    assert final_state.recovery_attempts == 1
+    assert final_state.iteration == 1
+    assert final_state.errors == ["Planner update failed: planner model failure"]
+    assert context_mgr.errors == ["Planner update failed: planner model failure"]
 
 import os
 from src.harness.tools.file_tools import ApplyPatchTool, FileWriteTool

@@ -37,6 +37,11 @@ class SequenceRunner(TestRunner):
         return result
 
 
+class FailingPlanner(Planner):
+    def update_plan(self, state):
+        raise ValueError("planner model failure")
+
+
 def run_git(repo, *args):
     return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
 
@@ -282,3 +287,22 @@ def test_malformed_action_records_error_and_returns_to_plan(tmp_path):
     assert "Invalid model action" in state.errors
     assert "Invalid model action" in orchestrator.context_manager.errors
     assert model.action_count == 2
+
+
+def test_planner_failure_uses_real_orchestrator_recovery_path(tmp_path):
+    repo = str(tmp_path)
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [{"action": "finish", "result": "recovered"}],
+        [{"status": "success", "exit_code": 0}],
+    )
+    orchestrator.planner = FailingPlanner(model)
+
+    state = orchestrator.run(State(task="Handle planner failure", repo_path=repo))
+
+    assert state.status == "success"
+    assert state.recovery_attempts == 1
+    assert state.iteration == 1
+    assert verifier.test_runner.calls == 1
+    assert "Planner update failed: planner model failure" in state.errors
+    assert "Planner update failed: planner model failure" in orchestrator.context_manager.errors

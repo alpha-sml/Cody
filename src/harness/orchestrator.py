@@ -123,8 +123,13 @@ class Orchestrator:
 
             elif current_phase == "PLAN":
                 state.context = self.context_manager.get_context_dict()
-                state.plan = self.planner.update_plan(state)
-                state.phase = "EXECUTE_ACTION"
+                try:
+                    state.plan = self.planner.update_plan(state)
+                except ValueError as exc:
+                    self._record_error(state, f"Planner update failed: {exc}")
+                    state.phase = "RECOVER"
+                else:
+                    state.phase = "EXECUTE_ACTION"
 
             elif current_phase == "EXECUTE_ACTION":
                 if state.iteration >= self.max_iterations:
