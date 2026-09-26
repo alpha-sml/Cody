@@ -1,3 +1,4 @@
+import subprocess
 import pytest
 from src.harness.orchestrator import Orchestrator
 from src.harness.state import State
@@ -7,6 +8,8 @@ from src.harness.recovery.recovery import RecoveryManager
 from src.harness.context.context_manager import ContextManager
 from src.harness.planner import Planner
 from src.harness.tools.base import BaseTool
+from src.harness.tools.file_tools import FileReadTool, FileSearchTool, FileWriteTool, RepoTreeTool
+from src.harness.tools.git import GitDiffTool, GitStatusTool
 
 class MockTool(BaseTool):
     name = "mock_tool"
@@ -67,6 +70,29 @@ class CountingModel(BaseModelClient):
         if self.actions:
             return self.actions.pop(0)
         return {"action": "finish", "result": "done"}
+
+
+class TracePlanner(Planner):
+    def __init__(self, model_client, trace):
+        super().__init__(model_client)
+        self.trace = trace
+
+    def update_plan(self, state):
+        self.trace.append(("planner", state.phase))
+        return super().update_plan(state)
+
+
+class TraceOrchestrator(Orchestrator):
+    def __init__(self, *args, trace, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.trace = trace
+
+    def _handle_action(self, action, state):
+        before = state.phase
+        super()._handle_action(action, state)
+        action_name = action.get("action") if isinstance(action, dict) else type(action).__name__
+        tool_name = action.get("tool") if isinstance(action, dict) else None
+        self.trace.append(("action", tool_name or action_name, before, state.phase))
 
 class MockPlanner(Planner):
     def update_plan(self, state):
@@ -195,6 +221,78 @@ def test_recovery_call_sequence_adds_one_model_call_per_recovery():
     assert model.execution_calls == 1
     assert model.recovery_calls == 1
     assert len(model.prompts) == 3
+
+
+@pytest.mark.parametrize(
+    ("informational_tools", "expected_tools"),
+    [
+        (["file_search", "file_read"], ["file_search", "file_read", "file_write"]),
+        (["file_read"], ["file_read", "file_write"]),
+        (["git_status"], ["git_status", "file_write"]),
+        (["git_diff"], ["git_diff", "file_write"]),
+    ],
+)
+def test_informational_tools_continue_execution_with_updated_context(
+    tmp_path, informational_tools, expected_tools
+):
+    repo = str(tmp_path)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "probe@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Probe"], cwd=repo, check=True)
+    (tmp_path / "target.txt").write_text("before\n")
+    subprocess.run(["git", "add", "target.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "baseline"], cwd=repo, check=True)
+    if "git_diff" in informational_tools:
+        (tmp_path / "target.txt").write_text("preexisting diff\n")
+
+    actions = []
+    for tool_name in informational_tools:
+        arguments = {"pattern": "before"} if tool_name == "file_search" else {}
+        if tool_name == "file_read":
+            arguments = {"path": "target.txt"}
+        actions.append({"action": "tool_call", "tool": tool_name, "arguments": arguments})
+    actions.append({"action": "tool_call", "tool": "file_write", "arguments": {"path": "target.txt", "content": "after\n"}})
+
+    model = CountingModel(actions)
+    trace = []
+    registry = ToolRegistry()
+    registry.register(RepoTreeTool(repo))
+    registry.register(FileReadTool(repo))
+    registry.register(FileSearchTool(repo))
+    registry.register(FileWriteTool(repo))
+    registry.register(GitStatusTool(repo))
+    registry.register(GitDiffTool(repo))
+    verifier = MockVerifier()
+    orchestrator = TraceOrchestrator(
+        model,
+        registry,
+        verifier,
+        RecoveryManager(model),
+        ContextManager(),
+        TracePlanner(model, trace),
+        trace=trace,
+    )
+
+    state = orchestrator.run(State(task="Update target.txt", repo_path=repo))
+
+    assert state.status == "success"
+    assert state.verification_results[0]["completion_status"] == "VERIFIED_SUCCESS"
+    assert model.plan_calls == 1
+    assert model.execution_calls == len(expected_tools)
+    assert model.recovery_calls == 0
+    assert [entry[1] for entry in trace if entry[0] == "action"] == expected_tools
+    assert trace[0] == ("planner", "PLAN")
+    assert all(entry[2] == "EXECUTE_ACTION" for entry in trace if entry[0] == "action")
+    assert trace[-1][3] == "VERIFY"
+
+    context_markers = {
+        "file_search": "file_search",
+        "file_read": "target.txt",
+        "git_status": "git_status",
+        "git_diff": "git_diff",
+    }
+    for index, tool_name in enumerate(informational_tools, start=2):
+        assert context_markers[tool_name] in model.prompts[index]
 
 def test_model_error():
     orch, model = setup_orchestrator([{"action": "error", "error_type": "api", "message": "API down"}] * 10, max_iterations=5)

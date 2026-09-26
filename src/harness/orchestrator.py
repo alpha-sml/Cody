@@ -135,6 +135,8 @@ class Orchestrator:
                     self.context_manager.add_tool_result({"tool": tool_name, "args": kwargs, "result": result})
                     if tool_name in ["file_write", "shell", "apply_patch"]:
                         state.phase = "VERIFY"
+                    elif tool_name in ["file_search", "file_read", "git_status", "git_diff"]:
+                        state.phase = "EXECUTE_ACTION"
                     else:
                         state.phase = "PLAN"
                 elif result.get("status") == "error":
