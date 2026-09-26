@@ -132,7 +132,7 @@ class Orchestrator:
 
                 state.tool_history.append({"tool": tool_name, "args": kwargs, "result": result})
                 if result.get("status") == "success":
-                    self.context_manager.add_tool_result({"tool": tool_name, "result": result})
+                    self.context_manager.add_tool_result({"tool": tool_name, "args": kwargs, "result": result})
                     if tool_name in ["file_write", "shell", "apply_patch"]:
                         state.phase = "VERIFY"
                     else:
