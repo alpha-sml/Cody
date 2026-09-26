@@ -9,7 +9,8 @@ from .model.client import get_client
 from .tools.registry import ToolRegistry
 from .tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool
 from .tools.shell import ShellTool
-from .tools.git import GitStatusTool, GitDiffTool
+from .tools.git import GitStatusTool, GitDiffTool, GitLogTool
+from .tools.code_tools import RunTestTool, InspectProjectTool, FindSymbolTool, FindReferencesTool
 from .verification.verifier import Verifier
 from .verification.test_runner import TestRunner
 from .recovery.recovery import RecoveryManager
@@ -108,6 +109,11 @@ def main():
     registry.register(ShellTool(args.repo, timeout=config.agent.timeout_seconds))
     registry.register(GitStatusTool(args.repo))
     registry.register(GitDiffTool(args.repo))
+    registry.register(GitLogTool(args.repo))
+    registry.register(RunTestTool(args.repo, default_command=config.agent.test_command))
+    registry.register(InspectProjectTool(args.repo))
+    registry.register(FindSymbolTool(args.repo))
+    registry.register(FindReferencesTool(args.repo))
 
     test_runner = TestRunner(args.repo, test_command=config.agent.test_command)
     verifier = Verifier(test_runner, args.repo)

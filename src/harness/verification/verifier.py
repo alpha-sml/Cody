@@ -2,6 +2,7 @@ from .test_runner import TestRunner
 from typing import Dict, Any
 import hashlib
 import os
+import re
 import subprocess
 
 def _bounded_output(output: Any) -> str:
@@ -75,7 +76,67 @@ class Verifier:
     def capture_baseline(self) -> Dict[str, Any]:
         return self.inspect_repository()
 
-    def verify(self) -> Dict[str, Any]:
+    def check_acceptance_criteria(self, task_spec: Any, changed_files: list) -> Dict[str, Any]:
+        """Evaluate task acceptance criteria against repository state."""
+        if not task_spec or not getattr(task_spec, "acceptance_criteria", None):
+            return {
+                "all_passed": True,
+                "has_failures": False,
+                "criteria_results": [],
+            }
+
+        results = []
+        has_failures = False
+        all_passed = True
+
+        for criterion in task_spec.acceptance_criteria:
+            c_text = str(criterion).strip()
+            if not c_text:
+                continue
+
+            # Check if criterion mentions specific files
+            mentioned_files = re.findall(r"[\w/.-]+\.\w+", c_text)
+            file_found = False
+            status = "UNRESOLVED"
+            reason = "Subjective or non-deterministic requirement"
+
+            if mentioned_files:
+                for mf in mentioned_files:
+                    full_p = os.path.join(self.repo_path, mf)
+                    if os.path.exists(full_p) or mf in changed_files:
+                        file_found = True
+                        break
+                if file_found:
+                    status = "PASS"
+                    reason = f"Referenced file(s) exist/modified: {mentioned_files}"
+                else:
+                    status = "FAIL"
+                    reason = f"Required file(s) not found: {mentioned_files}"
+                    has_failures = True
+                    all_passed = False
+            elif any(w in c_text.lower() for w in ["test", "pass", "build", "verify"]):
+                # Criteria relating to test passing - determined by test run
+                status = "PASS"
+                reason = "Verified via test suite"
+            else:
+                # Abstract/unresolved criteria
+                status = "UNRESOLVED"
+                reason = "Cannot be objectively validated automatically"
+                all_passed = False
+
+            results.append({
+                "criterion": c_text,
+                "status": status,
+                "reason": reason,
+            })
+
+        return {
+            "all_passed": all_passed,
+            "has_failures": has_failures,
+            "criteria_results": results,
+        }
+
+    def verify(self, task_spec: Any = None) -> Dict[str, Any]:
         result = self.test_runner.run_tests()
 
         repository = self.inspect_repository()
@@ -85,11 +146,26 @@ class Verifier:
 
         is_verified = (result.get("exit_code") == 0 and result.get("status") == "success")
 
+        # Determine granular status code
+        if repository["verification_errors"]:
+            status_code = "REPO_INSPECT_FAIL"
+        elif result.get("error") and "timed out" in str(result.get("error")).lower():
+            status_code = "TEST_TIMEOUT"
+        elif result.get("error") and ("not found" in str(result.get("error")).lower() or "no such" in str(result.get("error")).lower()):
+            status_code = "TEST_DISCOVER_FAIL"
+        elif not is_verified:
+            status_code = "TEST_EXEC_FAIL"
+        else:
+            status_code = "VERIFY_SUCCESS"
+
+        acceptance = self.check_acceptance_criteria(task_spec, repository["changed_files"])
+
         verification = {
             "tests_run": True,
             "verified": is_verified,
             "tests_passed": is_verified,
             "status": result.get("status"),
+            "status_code": status_code,
             "exit_code": result.get("exit_code"),
             "stdout": _bounded_output(result.get("stdout", "")),
             "stderr": _bounded_output(result.get("stderr", "")),
@@ -99,7 +175,10 @@ class Verifier:
             "diff_available": repository["diff_available"],
             "file_signatures": repository["file_signatures"],
             "verification_errors": verification_errors,
+            "acceptance_criteria": acceptance,
         }
+        if result.get("discovery"):
+            verification["test_discovery"] = result["discovery"]
         if result.get("error") is not None:
             verification["error"] = result["error"]
         if repository["verification_errors"]:

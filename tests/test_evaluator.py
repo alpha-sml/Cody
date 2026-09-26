@@ -63,6 +63,14 @@ class TestCredentialIsolation:
         assert "DEEPSEEK_API_KEY" not in stdout
         assert "QWEN_API_KEY" not in stdout
 
+    def test_sanitized_env_strips_ide_metadata_keys(self):
+        os.environ["ANTIGRAVITY_SOURCE_METADATA"] = "AI_API_KEY=test-secret-key make run"
+        try:
+            env = sanitized_env()
+            assert "ANTIGRAVITY_SOURCE_METADATA" not in env
+        finally:
+            os.environ.pop("ANTIGRAVITY_SOURCE_METADATA", None)
+
     def test_test_runner_subprocess_has_clean_env(self, tmp_path):
         """TestRunner must not leak credentials to test subprocesses."""
         from src.harness.verification.test_runner import TestRunner
@@ -140,6 +148,7 @@ class TestEvaluatorSmoke:
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_path), capture_output=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_path), capture_output=True)
         (tmp_path / "README.md").write_text("test")
+        (tmp_path / "Makefile").write_text("test:\n\t@true\n")
         subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True)
 
@@ -147,7 +156,8 @@ class TestEvaluatorSmoke:
 
         output = capsys.readouterr().out
         assert "Starting harness for task:" in output
-        assert "Finished with status:" in output
+        assert "Finished with status: success" in output
+        assert '"completion_status": "VERIFIED_SUCCESS"' in output
         # Credential must never appear in output
         assert "fake-test-key" not in output
 
@@ -162,13 +172,15 @@ class TestEvaluatorSmoke:
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_path), capture_output=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_path), capture_output=True)
         (tmp_path / "README.md").write_text("test")
+        (tmp_path / "Makefile").write_text("test:\n\t@true\n")
         subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True)
 
         main_module.main()
 
         output = capsys.readouterr().out
-        assert "Finished with status:" in output
+        assert "Finished with status: success" in output
+        assert '"completion_status": "VERIFIED_SUCCESS"' in output
         assert "fake-test-key" not in output
 
     def test_evaluator_no_task_exits(self, monkeypatch, tmp_path, capsys):

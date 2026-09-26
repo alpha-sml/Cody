@@ -22,6 +22,7 @@ class State(BaseModel):
     phase: str = "INITIALIZE"
     plan: List[str] = []
     current_step: Optional[str] = None
+    structured_plan: Optional[Dict[str, Any]] = None
     context: Dict[str, Any] = Field(default_factory=dict)
     tool_history: List[Dict[str, Any]] = Field(default_factory=list)
     baseline_repository: Dict[str, Any] = Field(default_factory=dict)

@@ -96,6 +96,9 @@ class Orchestrator:
 
         for path in re.findall(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+", state.task):
             expected.add(path)
+        struct = getattr(self.planner, "structured_plan", None)
+        if struct and struct.expected_files:
+            expected.update(struct.expected_files)
         return expected
 
     def _completion_gate(self, state: State, verification: dict):
@@ -103,6 +106,10 @@ class Orchestrator:
             return "TEST_FAILURE"
         if verification.get("verification_errors"):
             return "VERIFICATION_FAILED"
+
+        ac_result = verification.get("acceptance_criteria")
+        if ac_result and ac_result.get("has_failures"):
+            return "ACCEPTANCE_CRITERIA_FAILED"
 
         if not state.baseline_repository and "verification_errors" not in verification:
             return "VERIFIED_SUCCESS"
@@ -190,6 +197,15 @@ class Orchestrator:
                 state.tool_history.append({"tool": tool_name, "args": kwargs, "result": result})
                 if result.get("status") == "success":
                     self.context_manager.add_tool_result({"tool": tool_name, "args": kwargs, "result": result})
+                    if tool_name in ["file_write", "apply_patch"]:
+                        struct = getattr(self.planner, "structured_plan", None)
+                        if struct and struct.current_step:
+                            step_files = set(struct.current_step.files)
+                            touched_path = kwargs.get("path")
+                            if not step_files or (touched_path and touched_path in step_files):
+                                struct.advance()
+                                state.current_step = struct.current_step.description if struct.current_step else None
+                                state.structured_plan = struct.to_dict()
                     if tool_name in ["file_write", "shell", "apply_patch"]:
                         state.phase = "VERIFY"
                     elif tool_name in ["file_search", "file_read", "git_status", "git_diff"]:
@@ -215,6 +231,8 @@ class Orchestrator:
         state.status = "running"
         state.phase = "INITIALIZE"
         self._start_evaluation_report(state)
+        if hasattr(self.context_manager, "set_task"):
+            self.context_manager.set_task(state.task)
 
         while state.status == "running":
             current_phase = state.phase
@@ -245,6 +263,11 @@ class Orchestrator:
                 try:
                     self._count_model_call(state, "planner")
                     state.plan = self.planner.update_plan(state)
+                    struct = getattr(self.planner, "structured_plan", None)
+                    if struct:
+                        state.structured_plan = struct.to_dict()
+                        if struct.current_step:
+                            state.current_step = struct.current_step.description
                 except ValueError as exc:
                     self._record_error(state, f"Planner update failed: {exc}")
                     state.phase = "RECOVER"
@@ -259,8 +282,22 @@ class Orchestrator:
 
                 state.context = self.context_manager.get_context_dict()
 
+                struct = getattr(self.planner, "structured_plan", None)
+                curr_step = struct.current_step if struct else None
+                curr_step_str = f"Step {curr_step.id}: {curr_step.description} (Files: {curr_step.files}, Verification: {curr_step.verification})" if curr_step else "(None)"
+                completed_str = ", ".join(f"[{s.id}] {s.description}" for s in struct.completed_steps) if struct and struct.completed_steps else "(None)"
+                pending_str = ", ".join(f"[{s.id}] {s.description}" for s in struct.pending_steps) if struct and struct.pending_steps else "(None)"
+
                 sys_prompt = "You are an autonomous coding agent. Use available tools to complete the task."
-                prompt = f"Task: {state.task}\nContext: {json.dumps(state.context)}\nPlan: {state.plan}\nChoose next tool_call or finish."
+                prompt = (
+                    f"Task: {state.task}\n"
+                    f"Context: {json.dumps(state.context)}\n"
+                    f"Plan: {state.plan}\n"
+                    f"Current Plan Step: {curr_step_str}\n"
+                    f"Completed Steps: {completed_str}\n"
+                    f"Pending Steps: {pending_str}\n"
+                    f"Choose next tool_call or finish."
+                )
 
                 self._count_model_call(state, "execution")
                 action = self.model_client.generate(
@@ -273,12 +310,29 @@ class Orchestrator:
 
             elif current_phase == "VERIFY":
                 state.evaluation_report["verification_attempts"] += 1
-                verif_res = self.verifier.verify()
+                try:
+                    verif_res = self.verifier.verify(task_spec=state.task_spec)
+                except TypeError:
+                    verif_res = self.verifier.verify()
                 state.verification_results.append(verif_res)
                 changed_files = verif_res.get("changed_files", [])
                 state.changed_files = list(changed_files) if isinstance(changed_files, list) else []
                 completion_status = self._completion_gate(state, verif_res)
                 verif_res["completion_status"] = completion_status
+                expected_files = self._expected_changed_files(state)
+                c_files_set = set(state.changed_files)
+                b_files_set = set((state.baseline_repository or {}).get("changed_files", []))
+                cody_files = c_files_set - b_files_set
+                unexpected = cody_files - expected_files
+                has_shell_change = any(entry.get("tool") == "shell" for entry in state.tool_history)
+                ac = verif_res.get("acceptance_criteria")
+                verif_res["evidence"] = {
+                    "tests": "PASS" if verif_res.get("tests_passed") else "FAIL",
+                    "expected_files_changed": "PASS" if not (expected_files - c_files_set) else "PARTIAL",
+                    "acceptance_criteria": "PASS" if ac and ac.get("all_passed") else ("FAIL" if ac and ac.get("has_failures") else "UNRESOLVED"),
+                    "unexpected_changes": "NONE" if (not unexpected or has_shell_change) else f"FOUND ({len(unexpected)})",
+                    "completion": completion_status,
+                }
                 self.context_manager.add_verification_result(verif_res)
                 if completion_status == "VERIFIED_SUCCESS":
                     state.status = "success"

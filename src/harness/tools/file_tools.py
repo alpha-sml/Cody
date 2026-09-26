@@ -1,4 +1,5 @@
 from .base import BaseTool, ToolResult
+from .env import sanitized_env
 import os
 import subprocess
 from typing import Dict, Any, Optional
@@ -106,7 +107,7 @@ class FileSearchTool(BaseTool):
             safe_dir = safe_path(self.repo_path, directory)
             # Use grep for search, ignoring binary and obvious dirs
             cmd = ["grep", "-rnI", "--exclude-dir=.git", "--exclude-dir=venv", "--exclude-dir=__pycache__", "--", pattern, safe_dir]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, env=sanitized_env())
 
             if result.returncode > 1:
                 error = result.stderr.strip() or f"grep failed with exit code {result.returncode}"
@@ -146,7 +147,7 @@ class RepoTreeTool(BaseTool):
 
             safe_dir = safe_path(self.repo_path, directory)
             cmd = ["find", safe_dir, "-maxdepth", str(depth), "-not", "-path", "*/.git/*", "-not", "-path", "*/venv/*", "-not", "-path", "*/__pycache__/*"]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, env=sanitized_env())
             if result.returncode != 0:
                 error = result.stderr.strip() or f"find failed with exit code {result.returncode}"
                 return self.error_result(error, exit_code=result.returncode, stderr=result.stderr)
@@ -208,6 +209,7 @@ class ApplyPatchTool(BaseTool):
                     text=True,
                     timeout=30,
                     check=True,
+                    env=sanitized_env(),
                 )
 
                 stdout = _bounded_output(result.stdout)

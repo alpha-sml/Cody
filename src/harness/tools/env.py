@@ -17,10 +17,15 @@ _SENSITIVE_KEYS = frozenset([
     "QWEN_API_KEY",
 ])
 
+_SENSITIVE_PREFIXES = (
+    "ANTIGRAVITY_",
+)
+
 
 def sanitized_env() -> Dict[str, str]:
     """Return a copy of ``os.environ`` with all credential keys removed."""
     env = os.environ.copy()
-    for key in _SENSITIVE_KEYS:
-        env.pop(key, None)
+    for key in list(env.keys()):
+        if key in _SENSITIVE_KEYS or any(key.startswith(p) for p in _SENSITIVE_PREFIXES):
+            env.pop(key, None)
     return env

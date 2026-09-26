@@ -12,7 +12,7 @@ def classify_failure(evidence: Dict[str, Any]) -> Dict[str, Any]:
 
     category = "unknown"
     
-    if exit_code == -1 and "timeout" in full_text:
+    if exit_code == -1 and ("timeout" in full_text or "timed out" in full_text):
         category = "timeout"
     elif "assertionerror" in full_text or "test fail" in full_text or ("failed" in full_text and exit_code != 0) or "assert " in full_text:
         if "syntaxerror" in full_text or "indentationerror" in full_text:

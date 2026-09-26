@@ -42,11 +42,22 @@ class StructuredPlan:
         return [s for s in self.steps if s.status == "completed"]
 
     @property
+    def pending_steps(self) -> List[PlanStep]:
+        return [s for s in self.steps[self._current_index:] if s.status != "completed"]
+
+    @property
     def expected_files(self) -> List[str]:
         files = []
         for s in self.steps:
             files.extend(s.files)
-        return list(set(files))
+        return list(dict.fromkeys(files))
+
+    @property
+    def expected_verification(self) -> List[str]:
+        verifs = []
+        for s in self.steps:
+            verifs.extend(s.verification)
+        return list(dict.fromkeys(verifs))
 
     def advance(self):
         if self.current_step:
@@ -58,6 +69,8 @@ class StructuredPlan:
             "goal": self.goal,
             "steps": [s.to_dict() for s in self.steps],
             "current_step_index": self._current_index,
+            "expected_files": self.expected_files,
+            "expected_verification": self.expected_verification,
         }
 
     def to_step_list(self) -> List[str]:
@@ -67,10 +80,22 @@ class StructuredPlan:
 
 def _parse_structured_plan(response_text: str, goal: str) -> StructuredPlan:
     """Try to parse JSON structured plan from model response. Falls back to line-split."""
-    try:
-        data = json.loads(response_text) if response_text.strip().startswith("{") else None
-    except json.JSONDecodeError:
-        data = None
+    import re
+    text = response_text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    data = None
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = None
 
     if isinstance(data, dict) and "steps" in data:
         steps = []
@@ -83,12 +108,16 @@ def _parse_structured_plan(response_text: str, goal: str) -> StructuredPlan:
                     verification=step_data.get("verification", []),
                 ))
             elif isinstance(step_data, str):
-                steps.append(PlanStep(id=str(i + 1), description=step_data))
+                found_files = re.findall(r"[\w/.-]+\.\w+", step_data)
+                steps.append(PlanStep(id=str(i + 1), description=step_data, files=found_files))
         return StructuredPlan(goal=data.get("goal", goal), steps=steps)
 
-    # Fallback: line-split for backward compatibility
+    # Fallback: line-split for backward compatibility, extracting file references if any
     lines = [line.strip() for line in response_text.strip().split("\n") if line.strip()]
-    steps = [PlanStep(id=str(i + 1), description=line) for i, line in enumerate(lines)]
+    steps = []
+    for i, line in enumerate(lines):
+        found_files = re.findall(r"[\w/.-]+\.\w+", line)
+        steps.append(PlanStep(id=str(i + 1), description=line, files=found_files))
     return StructuredPlan(goal=goal, steps=steps)
 
 

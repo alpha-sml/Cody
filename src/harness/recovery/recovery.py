@@ -46,6 +46,21 @@ class RecoveryManager:
         is_repeated = self._is_repeated_failure(category, action_summary)
         self._record_failed_action(category, action_summary)
 
+        # Extract affected files
+        affected_files = list(classified.get("likely_files", []))
+        for f in state.changed_files:
+            if f not in affected_files:
+                affected_files.append(f)
+
+        # Recent tool calls for context
+        recent_tool_calls = [
+            {"tool": h.get("tool"), "args": h.get("args"), "status": h.get("result", {}).get("status")}
+            for h in state.tool_history[-3:]
+        ]
+
+        # Current plan step
+        current_step = state.current_step or (state.plan[0] if state.plan else "Resolve task failure")
+
         # Build targeted context instead of full dump
         targeted_context = {
             "relevant_files": state.context.get("relevant_files", []),
@@ -73,12 +88,15 @@ class RecoveryManager:
         if is_repeated:
             repeated_warning = (
                 "\n\nWARNING: This exact failure has occurred before. "
-                "You MUST try a fundamentally different approach."
+                "You MUST try a fundamentally different approach. Do not retry the same failed action."
             )
 
         prompt = (
             f"Task: {state.task}\n"
             f"Current Plan: {state.plan}\n"
+            f"Current Plan Step: {current_step}\n"
+            f"Recent Tool Calls: {json.dumps(recent_tool_calls)}\n"
+            f"Affected Files: {json.dumps(affected_files)}\n"
             f"Context: {json.dumps(targeted_context, indent=2)}\n"
             f"An operation failed. Please provide a corrective tool_call or finish.\n"
             f"Failure Classification: {category}\n"
@@ -96,4 +114,21 @@ class RecoveryManager:
                 "message": "Recovery model returned a malformed response: expected a dictionary."
             }
 
-        return validate_action(response, tools=tools)
+        action = validate_action(response, tools=tools)
+
+        # Detect if model attempts identical failed tool call from previous attempt
+        if action.get("action") == "tool_call" and state.tool_history:
+            last_tool = state.tool_history[-1]
+            if (
+                last_tool.get("tool") == action.get("tool")
+                and last_tool.get("args") == action.get("arguments")
+                and last_tool.get("result", {}).get("status") == "error"
+                and is_repeated
+            ):
+                return {
+                    "action": "error",
+                    "error_type": "repeated_action_loop_prevented",
+                    "message": f"Action {action.get('tool')} with identical arguments failed previously. Alternative recovery strategy required.",
+                }
+
+        return action
