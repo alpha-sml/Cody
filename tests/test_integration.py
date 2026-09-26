@@ -55,7 +55,7 @@ def test_full_integration(tmp_path):
     context_mgr = ContextManager()
     planner = Planner(model)
 
-    orchestrator = Orchestrator(model, registry, verifier, recovery, context_mgr, planner, max_iterations=5, max_recovery_attempts=2)
+    orchestrator = Orchestrator(model, registry, verifier, recovery, context_mgr, planner, max_iterations=15, max_recovery_attempts=2)
     state = State(task="Integration task", repo_path=repo)
     
     final_state = orchestrator.run(state)

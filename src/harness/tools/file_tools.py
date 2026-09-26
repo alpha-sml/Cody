@@ -167,15 +167,21 @@ class ApplyPatchTool(BaseTool):
                 patch_file = f.name
 
             try:
-                cmd = ["patch", safe_p, "-i", patch_file]
-                result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True)
+                cmd = ["patch", "-f", safe_p, "-i", patch_file]
+                result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=30)
+
+                stdout = result.stdout[:10000] + ("\n...[TRUNCATED]" if len(result.stdout) > 10000 else "")
+                stderr = result.stderr[:10000] + ("\n...[TRUNCATED]" if len(result.stderr) > 10000 else "")
 
                 if result.returncode != 0:
-                    return self.error_result("Patch failed to apply cleanly.", exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr)
+                    return self.error_result("Patch failed to apply cleanly.", exit_code=result.returncode, stdout=stdout, stderr=stderr)
 
-                return self.success_result(path=path, stdout=result.stdout)
+                return self.success_result(path=path, stdout=stdout)
+            except subprocess.TimeoutExpired:
+                return self.error_result("Patch operation timed out.", exit_code=-1)
             finally:
-                os.remove(patch_file)
+                if os.path.exists(patch_file):
+                    os.remove(patch_file)
 
         except Exception as e:
             return self.error_result(str(e))

@@ -5,6 +5,32 @@ import requests
 from .base import BaseModelClient
 from typing import List, Dict, Any, Optional
 
+def validate_action(action: Dict[str, Any]) -> Dict[str, Any]:
+    action_type = action.get("action")
+    if action_type == "tool_call":
+        if not isinstance(action.get("tool"), str) or not isinstance(action.get("arguments"), dict):
+            return {
+                "action": "error",
+                "error_type": "invalid_model_action",
+                "message": "tool_call requires string 'tool' and dict 'arguments'"
+            }
+    elif action_type == "finish":
+        pass
+    elif action_type == "error":
+        if not isinstance(action.get("error_type"), str) or not isinstance(action.get("message"), str):
+            return {
+                "action": "error",
+                "error_type": "invalid_model_action",
+                "message": "error requires string 'error_type' and 'message'"
+            }
+    else:
+        return {
+            "action": "error",
+            "error_type": "invalid_model_action",
+            "message": f"Unknown action: {action_type}"
+        }
+    return action
+
 def extract_json(text: str) -> Dict[str, Any]:
     # Try markdown json blocks firs
     json_blocks = re.findall(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
@@ -44,8 +70,8 @@ class MockClient(BaseModelClient):
         elif "test_shell" in prompt:
             return {"action": "tool_call", "tool": "shell", "arguments": {"command": "echo mock"}}
         elif "recovery" in prompt.lower():
-            return {"action": "tool_call", "tool": "shell", "arguments": {"command": "echo fixed"}}
-        return {"action": "finish", "result": "Mock finished"}
+            return validate_action({"action": "tool_call", "tool": "shell", "arguments": {"command": "echo fixed"}})
+        return validate_action({"action": "finish", "result": "Mock finished"})
 
 class GoogleClient(BaseModelClient):
     def __init__(self, api_key: str, model_name: str):
@@ -63,13 +89,23 @@ class GoogleClient(BaseModelClient):
 
         payload = {"contents": contents}
 
+        if tools:
+            function_declarations = []
+            for tool in tools:
+                function_declarations.append({
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("parameters", {"type": "object", "properties": {}})
+                })
+            payload["tools"] = [{"functionDeclarations": function_declarations}]
+
         try:
             response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 try:
                     text = data['candidates'][0]['content']['parts'][0]['text']
-                    return extract_json(text)
+                    return validate_action(extract_json(text))
                 except (KeyError, IndexError):
                     return {"action": "error", "error_type": "model_api_error", "message": "Invalid response structure from API"}
             else:

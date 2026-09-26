@@ -1,5 +1,7 @@
 import pytest
 import os
+import requests
+from unittest.mock import patch
 from src.harness.model.client import extract_json, MockClient, GoogleClient
 from src.harness.tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool, safe_path
 from src.harness.tools.shell import ShellTool
@@ -28,10 +30,49 @@ def test_extract_json_fences():
 
 def test_api_failure_behavior():
     client = GoogleClient("fake_key", "gemini-pro")
-    # This should fail and return a structured error, not "finish"
-    res = client.generate("test prompt")
-    assert res["action"] == "error"
-    assert "model_api_" in res["error_type"]
+
+    # 1. Timeout
+    with patch("requests.post", side_effect=requests.Timeout):
+        res = client.generate("test prompt")
+        assert res["action"] == "error"
+        assert res["error_type"] == "model_api_timeout"
+
+    # 2. HTTP Error
+    class MockResponse:
+        status_code = 500
+        text = "Internal Server Error"
+    with patch("requests.post", return_value=MockResponse()):
+        res = client.generate("test prompt")
+        assert res["action"] == "error"
+        assert "model_api_error" in res["error_type"]
+
+    # 3. Valid JSON with tool call
+    class MockValidResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "candidates": [{"content": {"parts": [{"text": '{"action": "tool_call", "tool": "test", "arguments": {}}'}]}}]
+            }
+    with patch("requests.post", return_value=MockValidResponse()):
+        res = client.generate("test prompt")
+        assert res["action"] == "tool_call"
+
+    # 4. Invalid structure returned by model
+    class MockInvalidResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "candidates": [{"content": {"parts": [{"text": '{"action": "tool_call"}'}]}}]
+            }
+    with patch("requests.post", return_value=MockInvalidResponse()):
+        res = client.generate("test prompt")
+        assert res["action"] == "error"
+        assert res["error_type"] == "invalid_model_action"
+
+def test_mock_client_accepts_tools():
+    client = MockClient()
+    res = client.generate("test prompt", tools=[{"name": "test"}])
+    assert res["action"] == "finish"
 
 def test_tool_registry():
     registry = ToolRegistry()
@@ -49,21 +90,37 @@ def test_apply_patch(tmp_path):
     with open(file_path, "w") as f:
         f.write("Line 1\nLine 2\nLine 3\n")
 
-    patch = """--- test.txt
-+++ test.txt
-@@ -1,3 +1,3 @@
- Line 1
--Line 2
-+Line 2 changed
- Line 3
-"""
+    patch_content = """--- test.txt\n+++ test.txt\n@@ -1,3 +1,3 @@\n Line 1\n-Line 2\n+Line 2 changed\n Line 3\n"""
     tool = ApplyPatchTool(repo)
-    res = tool.execute("test.txt", patch)
+    res = tool.execute("test.txt", patch_content)
     assert res["status"] == "success"
 
     with open(file_path, "r") as f:
         content = f.read()
     assert "Line 2 changed" in content
+
+def test_apply_patch_edge_cases(tmp_path):
+    repo = str(tmp_path)
+    tool = ApplyPatchTool(repo)
+
+    # 1. Non-existent file
+    res = tool.execute("missing.txt", "--- missing.txt\n+++ missing.txt\n@@ -1 +1 @@\n-a\n+b\n")
+    assert res["status"] == "error"
+    assert "does not exist" in res["error"]
+
+    # 2. Path traversal
+    res = tool.execute("../outside.txt", "patch")
+    assert res["status"] == "error"
+    assert "outside workspace" in res["error"]
+
+    # 3. Malformed patch
+    file_path = os.path.join(repo, "test2.txt")
+    with open(file_path, "w") as f:
+        f.write("Line 1\n")
+
+    res = tool.execute("test2.txt", "this is not a valid patch format")
+    assert res["status"] == "error"
+    assert "Patch failed" in res["error"]
 
 def test_shell_failure(tmp_path):
     tool = ShellTool(str(tmp_path))
@@ -101,7 +158,7 @@ def test_member2_integration(tmp_path):
                 "tool": "apply_patch",
                 "arguments": {
                     "path": "app.py",
-                    "patch": "--- app.py\n+++ app.py\n@@ -1,1 +1,1 @@\n-old\n+new"
+                    "patch": "--- app.py\n+++ app.py\n@@ -1,1 +1,1 @@\n-old\n+new\n"
                 }
             }
 
