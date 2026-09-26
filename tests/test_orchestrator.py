@@ -22,14 +22,15 @@ class MockTool(BaseTool):
         return {"type": "object", "properties": {}}
 
 class MockVerifier:
-    def __init__(self, succeed_on_call=1):
+    def __init__(self, succeed_on_call=1, changed_files=None):
         self.calls = 0
         self.succeed_on_call = succeed_on_call
+        self.changed_files = changed_files or []
     def verify(self):
         self.calls += 1
         if self.calls >= self.succeed_on_call:
-            return {"verified": True, "tests_passed": True}
-        return {"verified": False, "tests_passed": False, "error": "tests failed"}
+            return {"verified": True, "tests_passed": True, "changed_files": self.changed_files}
+        return {"verified": False, "tests_passed": False, "error": "tests failed", "changed_files": self.changed_files}
 
 class MockModel(BaseModelClient):
     def __init__(self, actions):
@@ -58,6 +59,10 @@ def setup_orchestrator(model_actions, verifier_succeed_on=1, max_iterations=15, 
     class FileWriteMock(MockTool):
         name = "file_write"
     registry.register(FileWriteMock(succeed=tool_succeeds))
+
+    class RepoTreeMock(MockTool):
+        name = "repo_tree"
+    registry.register(RepoTreeMock())
 
     verifier = MockVerifier(succeed_on_call=verifier_succeed_on)
     recovery = RecoveryManager(model)
@@ -90,6 +95,17 @@ def test_finish_with_recovery():
 
     assert final_state.status == "success"
     assert state.recovery_attempts == 1
+    assert state.iteration == 2
+
+
+def test_changed_files_are_copied_from_verifier():
+    orch, model = setup_orchestrator([{"action": "finish", "result": "Done"}])
+    orch.verifier.changed_files = ["src/changed.py", "tests/changed.py"]
+
+    final_state = orch.run(State(task="Test"))
+
+    assert final_state.status == "success"
+    assert final_state.changed_files == ["src/changed.py", "tests/changed.py"]
 
 def test_model_error():
     orch, model = setup_orchestrator([{"action": "error", "error_type": "api", "message": "API down"}] * 10, max_iterations=5)
@@ -140,3 +156,25 @@ def test_max_iterations():
     assert final_state.status == "failed"
     assert final_state.iteration == 3
     assert "Max iterations reached" in final_state.final_result
+
+
+def test_malformed_model_action_returns_to_plan_with_context_error():
+    orch, model = setup_orchestrator([None, {"action": "finish", "result": "Done"}])
+
+    final_state = orch.run(State(task="Test"))
+
+    assert final_state.status == "success"
+    assert "Invalid model action" in final_state.errors
+    assert "Invalid model action" in orch.context_manager.errors
+
+
+def test_repo_tree_failure_is_recorded_and_does_not_crash():
+    orch, model = setup_orchestrator([{"action": "finish", "result": "Done"}])
+    repo_tree = orch.tool_registry.get_tool("repo_tree")
+    repo_tree.succeed = False
+
+    final_state = orch.run(State(task="Test"))
+
+    assert final_state.status == "success"
+    assert "Mock tool failed" in final_state.errors
+    assert "Mock tool failed" in orch.context_manager.errors

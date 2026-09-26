@@ -68,6 +68,7 @@ def test_recovery_state_machine_path():
 
     assert final_state.status == "success"
     assert final_state.recovery_attempts == 1
+    assert final_state.iteration == 2
     assert len(final_state.tool_history) == 2 # Initial tool_call + Recovery tool_call
     assert final_state.tool_history[1]["tool"] == "file_write"
 

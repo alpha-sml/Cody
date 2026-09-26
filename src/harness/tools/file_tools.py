@@ -3,6 +3,15 @@ import os
 import subprocess
 from typing import Dict, Any, Optional
 
+
+def _bounded_output(output: Optional[str]) -> str:
+    if not output:
+        return ""
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    return output[:10000] + ("\n...[TRUNCATED]" if len(output) > 10000 else "")
+
+
 def safe_path(repo_path: str, target: str) -> str:
     # Resolve symlinks before checking containment to prevent workspace escapes.
     abs_repo = os.path.realpath(repo_path)
@@ -95,16 +104,14 @@ class FileSearchTool(BaseTool):
         try:
             safe_dir = safe_path(self.repo_path, directory)
             # Use grep for search, ignoring binary and obvious dirs
-            cmd = ["grep", "-rnI", "--exclude-dir=.git", "--exclude-dir=venv", "--exclude-dir=__pycache__", pattern, safe_dir]
+            cmd = ["grep", "-rnI", "--exclude-dir=.git", "--exclude-dir=venv", "--exclude-dir=__pycache__", "--", pattern, safe_dir]
             result = subprocess.run(cmd, capture_output=True, text=True)
 
             if result.returncode > 1:
                 error = result.stderr.strip() or f"grep failed with exit code {result.returncode}"
                 return self.error_result(error, exit_code=result.returncode, stderr=result.stderr)
 
-            output = result.stdout
-            if len(output) > 10000:
-                output = output[:10000] + "\n...[TRUNCATED]"
+            output = _bounded_output(result.stdout)
 
             return self.success_result(results=output)
         except Exception as e:
@@ -129,6 +136,13 @@ class RepoTreeTool(BaseTool):
 
     def execute(self, directory: str = ".", depth: int = 2, **kwargs: Any) -> ToolResult:
         try:
+            if isinstance(depth, bool) or not isinstance(depth, int):
+                return self.error_result("depth must be an integer")
+            if depth < 0:
+                return self.error_result("depth must be non-negative")
+            if depth > 100:
+                return self.error_result("depth must not exceed 100")
+
             safe_dir = safe_path(self.repo_path, directory)
             cmd = ["find", safe_dir, "-maxdepth", str(depth), "-not", "-path", "*/.git/*", "-not", "-path", "*/venv/*", "-not", "-path", "*/__pycache__/*"]
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -156,10 +170,27 @@ class ApplyPatchTool(BaseTool):
         self.repo_path = repo_path
 
     def execute(self, path: str, patch: str, **kwargs: Any) -> ToolResult:
+        patch_file = None
+        original_content = None
+        safe_p = None
+
+        def restore_original() -> Optional[str]:
+            if safe_p is None or original_content is None:
+                return None
+            try:
+                with open(safe_p, "wb") as target_file:
+                    target_file.write(original_content)
+            except OSError as exc:
+                return f" Could not restore the target file: {exc}"
+            return None
+
         try:
             safe_p = safe_path(self.repo_path, path)
-            if not os.path.exists(safe_p):
+            if not os.path.isfile(safe_p):
                 return self.error_result(f"File {path} does not exist. Cannot patch.")
+
+            with open(safe_p, "rb") as target_file:
+                original_content = target_file.read()
 
             import tempfile
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
@@ -168,19 +199,48 @@ class ApplyPatchTool(BaseTool):
 
             try:
                 cmd = ["patch", "-f", safe_p, "-i", patch_file]
-                result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=30)
+                result = subprocess.run(
+                    cmd,
+                    cwd=self.repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=True,
+                )
 
-                stdout = result.stdout[:10000] + ("\n...[TRUNCATED]" if len(result.stdout) > 10000 else "")
-                stderr = result.stderr[:10000] + ("\n...[TRUNCATED]" if len(result.stderr) > 10000 else "")
+                stdout = _bounded_output(result.stdout)
+                stderr = _bounded_output(result.stderr)
 
-                if result.returncode != 0:
-                    return self.error_result("Patch failed to apply cleanly.", exit_code=result.returncode, stdout=stdout, stderr=stderr)
-
-                return self.success_result(path=path, stdout=stdout)
-            except subprocess.TimeoutExpired:
-                return self.error_result("Patch operation timed out.", exit_code=-1)
+                return self.success_result(path=path, stdout=stdout, stderr=stderr)
+            except subprocess.CalledProcessError as exc:
+                stdout = _bounded_output(exc.stdout)
+                stderr = _bounded_output(exc.stderr)
+                restore_error = restore_original()
+                return self.error_result(
+                    "Patch failed to apply cleanly." + (restore_error or ""),
+                    exit_code=exc.returncode,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+            except subprocess.TimeoutExpired as exc:
+                restore_error = restore_original()
+                return self.error_result(
+                    "Patch operation timed out." + (restore_error or ""),
+                    exit_code=-1,
+                    stdout=_bounded_output(exc.stdout),
+                    stderr=_bounded_output(exc.stderr),
+                )
+            except OSError as exc:
+                restore_error = restore_original()
+                return self.error_result(
+                    f"Patch command failed: {exc}" + (restore_error or ""),
+                    exit_code=-1,
+                )
+            except Exception:
+                restore_original()
+                raise
             finally:
-                if os.path.exists(patch_file):
+                if patch_file and os.path.exists(patch_file):
                     os.remove(patch_file)
 
         except Exception as e:

@@ -28,22 +28,50 @@ class Orchestrator:
         self.max_iterations = max_iterations
         self.max_recovery_attempts = max_recovery_attempts
 
+    def _record_error(self, state: State, error: str):
+        state.errors.append(error)
+        self.context_manager.add_error(error)
+
     def _handle_action(self, action: dict, state: State):
+        if not isinstance(action, dict):
+            self._record_error(state, "Invalid model action")
+            state.phase = "PLAN"
+            return
+
         if action.get("action") == "finish":
             state.final_result = action.get("result", "")
             state.phase = "VERIFY"
         elif action.get("action") == "error":
-            error_msg = action.get("message", "Model returned an error action")
-            state.errors.append(error_msg)
-            self.context_manager.add_error(error_msg)
+            error_msg = str(action.get("message", "Model returned an error action"))
+            self._record_error(state, error_msg)
             state.phase = "PLAN"
         elif action.get("action") == "tool_call":
             tool_name = action.get("tool")
             kwargs = action.get("arguments", {})
 
+            if not isinstance(tool_name, str) or not tool_name:
+                self._record_error(state, "Invalid model action: tool_call requires a tool name.")
+                state.phase = "PLAN"
+                return
+            if not isinstance(kwargs, dict):
+                self._record_error(state, f"Invalid model action: arguments for tool {tool_name} must be an object.")
+                state.phase = "PLAN"
+                return
+
             tool = self.tool_registry.get_tool(tool_name)
             if tool:
-                result = tool.execute(**kwargs)
+                try:
+                    result = tool.execute(**kwargs)
+                except Exception as exc:
+                    self._record_error(state, f"Tool {tool_name} execution failed: {exc}")
+                    state.phase = "PLAN"
+                    return
+
+                if not isinstance(result, dict):
+                    self._record_error(state, f"Tool {tool_name} returned an invalid result.")
+                    state.phase = "PLAN"
+                    return
+
                 state.tool_history.append({"tool": tool_name, "args": kwargs, "result": result})
                 if result.get("status") == "success":
                     self.context_manager.add_tool_result({"tool": tool_name, "result": result})
@@ -52,18 +80,18 @@ class Orchestrator:
                     else:
                         state.phase = "PLAN"
                 elif result.get("status") == "error":
-                    error = result.get("error", "Tool execution failed.")
-                    state.errors.append(error)
-                    self.context_manager.add_error(error)
+                    error = str(result.get("error", "Tool execution failed."))
+                    self._record_error(state, error)
+                    state.phase = "PLAN"
+                else:
+                    self._record_error(state, f"Tool {tool_name} returned an invalid result status.")
                     state.phase = "PLAN"
             else:
                 err = f"Tool {tool_name} not found."
-                state.errors.append(err)
-                self.context_manager.add_error(err)
+                self._record_error(state, err)
                 state.phase = "PLAN"
         else:
-            state.errors.append("Invalid model action")
-            self.context_manager.add_error("Invalid model action")
+            self._record_error(state, "Invalid model action")
             state.phase = "PLAN"
 
     def run(self, state: State) -> State:
@@ -76,9 +104,21 @@ class Orchestrator:
             if current_phase == "INITIALIZE":
                 # Discover repo tree
                 tree_tool = self.tool_registry.get_tool("repo_tree")
-                if tree_tool:
-                    res = tree_tool.execute(directory=".")
-                    self.context_manager.set_tree(res.get("tree", ""))
+                if not tree_tool:
+                    self._record_error(state, "Tool repo_tree not found.")
+                else:
+                    try:
+                        res = tree_tool.execute(directory=".")
+                    except Exception as exc:
+                        self._record_error(state, f"Tool repo_tree execution failed: {exc}")
+                        res = None
+
+                    if isinstance(res, dict) and res.get("status") == "success":
+                        self.context_manager.set_tree(res.get("tree", ""))
+                    elif isinstance(res, dict):
+                        self._record_error(state, str(res.get("error", "Repository tree discovery failed.")))
+                    elif res is not None:
+                        self._record_error(state, "Repository tree discovery returned an invalid result.")
                 state.phase = "PLAN"
 
             elif current_phase == "PLAN":
@@ -108,6 +148,8 @@ class Orchestrator:
             elif current_phase == "VERIFY":
                 verif_res = self.verifier.verify()
                 state.verification_results.append(verif_res)
+                changed_files = verif_res.get("changed_files", [])
+                state.changed_files = list(changed_files) if isinstance(changed_files, list) else []
                 if verif_res.get("verified") and verif_res.get("tests_passed"):
                     state.status = "success"
                     if not state.final_result:
