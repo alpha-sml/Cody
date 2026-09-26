@@ -70,7 +70,7 @@ class Orchestrator:
         state.status = "running"
         state.phase = "INITIALIZE"
 
-        while state.iteration < self.max_iterations:
+        while state.status == "running":
             current_phase = state.phase
 
             if current_phase == "INITIALIZE":
@@ -87,6 +87,11 @@ class Orchestrator:
                 state.phase = "EXECUTE_ACTION"
 
             elif current_phase == "EXECUTE_ACTION":
+                if state.iteration >= self.max_iterations:
+                    state.status = "failed"
+                    state.final_result = "Max iterations reached"
+                    break
+
                 state.context = self.context_manager.get_context_dict()
 
                 sys_prompt = "You are an autonomous coding agent. Use available tools to complete the task."
@@ -98,6 +103,7 @@ class Orchestrator:
                     tools=self.tool_registry.get_all_schemas()
                 )
                 self._handle_action(action, state)
+                state.iteration += 1
 
             elif current_phase == "VERIFY":
                 verif_res = self.verifier.verify()
@@ -116,6 +122,11 @@ class Orchestrator:
                     state.final_result = "Max recovery attempts reached."
                     break
 
+                if state.iteration >= self.max_iterations:
+                    state.status = "failed"
+                    state.final_result = "Max iterations reached"
+                    break
+
                 last_verif = state.verification_results[-1] if state.verification_results else {}
                 recovery_action = self.recovery_manager.recover(
                     state,
@@ -125,13 +136,6 @@ class Orchestrator:
                 state.plan.append(f"Recovery attempt {state.recovery_attempts + 1}")
                 state.recovery_attempts += 1
                 self._handle_action(recovery_action, state)
-
-            state.iteration += 1
-            if state.status != "running":
-                break
-
-        if state.status == "running":
-            state.status = "failed"
-            state.final_result = "Max iterations reached"
+                state.iteration += 1
 
         return state

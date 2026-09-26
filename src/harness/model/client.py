@@ -104,7 +104,16 @@ class GoogleClient(BaseModelClient):
             if response.status_code == 200:
                 data = response.json()
                 try:
-                    text = data['candidates'][0]['content']['parts'][0]['text']
+                    parts = data['candidates'][0]['content']['parts']
+                    for part in parts:
+                        if 'functionCall' in part:
+                            fc = part['functionCall']
+                            return validate_action({
+                                "action": "tool_call",
+                                "tool": fc.get("name"),
+                                "arguments": fc.get("args", {})
+                            })
+                    text = parts[0]['text']
                     return validate_action(extract_json(text))
                 except (KeyError, IndexError):
                     return {"action": "error", "error_type": "model_api_error", "message": "Invalid response structure from API"}
