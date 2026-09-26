@@ -37,23 +37,23 @@ class FileReadTool(BaseTool):
 
             end = end_line if end_line is not None else len(lines)
             content = "".join(lines[start_line - 1 : end])
-            
+
             # bounded reads
             if len(content) > 10000:
                 content = content[:10000] + "\n...[TRUNCATED]"
-                
+
             return self.success_result(content=content)
         except Exception as e:
             return self.error_result(str(e))
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
-            "type": "object", 
+            "type": "object",
             "properties": {
                 "path": {"type": "string"},
                 "start_line": {"type": "integer"},
                 "end_line": {"type": "integer"}
-            }, 
+            },
             "required": ["path"]
         }
 
@@ -76,11 +76,11 @@ class FileWriteTool(BaseTool):
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "path": {"type": "string"}, 
+                "path": {"type": "string"},
                 "content": {"type": "string"}
-            }, 
+            },
             "required": ["path", "content"]
         }
 
@@ -101,22 +101,22 @@ class FileSearchTool(BaseTool):
             if result.returncode > 1:
                 error = result.stderr.strip() or f"grep failed with exit code {result.returncode}"
                 return self.error_result(error, exit_code=result.returncode, stderr=result.stderr)
-            
+
             output = result.stdout
             if len(output) > 10000:
                 output = output[:10000] + "\n...[TRUNCATED]"
-                
+
             return self.success_result(results=output)
         except Exception as e:
             return self.error_result(str(e))
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "pattern": {"type": "string"}, 
+                "pattern": {"type": "string"},
                 "directory": {"type": "string"}
-            }, 
+            },
             "required": ["pattern"]
         }
 
@@ -141,9 +141,51 @@ class RepoTreeTool(BaseTool):
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
-            "type": "object", 
+            "type": "object",
             "properties": {
                 "directory": {"type": "string"},
                 "depth": {"type": "integer"}
             }
+        }
+
+class ApplyPatchTool(BaseTool):
+    name = "apply_patch"
+    description = "Apply a targeted unified diff patch to an existing repository file."
+
+    def __init__(self, repo_path: str):
+        self.repo_path = repo_path
+
+    def execute(self, path: str, patch: str, **kwargs: Any) -> ToolResult:
+        try:
+            safe_p = safe_path(self.repo_path, path)
+            if not os.path.exists(safe_p):
+                return self.error_result(f"File {path} does not exist. Cannot patch.")
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+                f.write(patch)
+                patch_file = f.name
+
+            try:
+                cmd = ["patch", safe_p, "-i", patch_file]
+                result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True)
+
+                if result.returncode != 0:
+                    return self.error_result("Patch failed to apply cleanly.", exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr)
+
+                return self.success_result(path=path, stdout=result.stdout)
+            finally:
+                os.remove(patch_file)
+
+        except Exception as e:
+            return self.error_result(str(e))
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "patch": {"type": "string"}
+            },
+            "required": ["path", "patch"]
         }

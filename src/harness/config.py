@@ -11,6 +11,7 @@ class AgentConfig(BaseModel):
     max_iterations: int = 15
     timeout_seconds: int = 300
     max_recovery_attempts: int = 3
+    test_command: str = "make test"
 
 class HarnessConfig(BaseModel):
     model: ModelConfig

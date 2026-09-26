@@ -6,41 +6,31 @@ from .base import BaseModelClient
 from typing import List, Dict, Any, Optional
 
 def extract_json(text: str) -> Dict[str, Any]:
-    # Robust json extraction using regex
-    try:
-        matches = re.finditer(r'\{(?:[^{}]|(?R))*\}', text)
-        # Using a simpler regex that matches { ... } broadly, then loads.
-        # Since Python re doesn't have recursive matching (?R), we just find outer braces manually
-        stack = []
-        start = -1
-        last_json = None
-        for i, char in enumerate(text):
-            if char == '{':
-                if not stack:
-                    start = i
-                stack.append(char)
-            elif char == '}':
-                if stack:
-                    stack.pop()
-                    if not stack:
-                        try:
-                            last_json = json.loads(text[start:i+1])
-                        except:
-                            pass
-        if last_json:
-            return last_json
-    except Exception:
-        pass
-    
-    # Fallback to simple outer braces
-    try:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end >= start:
-            return json.loads(text[start:end+1])
-    except:
-        pass
-    return {"action": "finish", "result": "Failed to parse json", "raw_response": text}
+    # Try markdown json blocks firs
+    json_blocks = re.findall(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    for block in json_blocks:
+        try:
+            return json.loads(block)
+        except json.JSONDecodeError:
+            continue
+
+    # Try to find the first '{' and parse up to the last valid '}'
+    start_idx = text.find('{')
+    if start_idx != -1:
+        # Iterate backwards from the end to find the closing brace
+        for i in range(len(text) - 1, start_idx - 1, -1):
+            if text[i] == '}':
+                try:
+                    return json.loads(text[start_idx:i+1])
+                except json.JSONDecodeError:
+                    continue
+
+    return {
+        "action": "error",
+        "error_type": "invalid_model_response",
+        "message": "Failed to extract valid JSON action from model response.",
+        "raw_response": text
+    }
 
 class MockClient(BaseModelClient):
     def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -64,34 +54,36 @@ class GoogleClient(BaseModelClient):
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
-        
+
         contents = []
         if system_prompt:
             contents.append({"role": "user", "parts": [{"text": "SYSTEM: " + system_prompt}]})
-        
+
         contents.append({"role": "user", "parts": [{"text": prompt}]})
-        
+
         payload = {"contents": contents}
-        
+
         try:
-            response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
+            response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 try:
                     text = data['candidates'][0]['content']['parts'][0]['text']
                     return extract_json(text)
                 except (KeyError, IndexError):
-                    return {"action": "finish", "result": "API error: Invalid response structure"}
+                    return {"action": "error", "error_type": "model_api_error", "message": "Invalid response structure from API"}
             else:
-                return {"action": "finish", "result": f"API error: {response.status_code} {response.text}"}
+                return {"action": "error", "error_type": "model_api_error", "message": f"API error: {response.status_code} {response.text}"}
+        except requests.Timeout:
+            return {"action": "error", "error_type": "model_api_timeout", "message": "API request timed out"}
         except Exception as e:
-            return {"action": "finish", "result": f"API exception: {str(e)}"}
+            return {"action": "error", "error_type": "model_api_error", "message": f"API exception: {str(e)}"}
 
 def get_client(model_name: str) -> BaseModelClient:
     is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true"
     if is_mock:
         return MockClient()
-    
+
     api_key = os.environ.get("AI_API_KEY")
     if not api_key:
         raise ValueError("AI_API_KEY environment variable is not set")

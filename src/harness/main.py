@@ -4,7 +4,7 @@ from .config import load_config
 from .state import State
 from .model.client import get_client
 from .tools.registry import ToolRegistry
-from .tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool
+from .tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool
 from .tools.shell import ShellTool
 from .tools.git import GitStatusTool, GitDiffTool
 from .verification.verifier import Verifier
@@ -35,13 +35,14 @@ def main():
     registry = ToolRegistry()
     registry.register(FileReadTool(args.repo))
     registry.register(FileWriteTool(args.repo))
+    registry.register(ApplyPatchTool(args.repo))
     registry.register(FileSearchTool(args.repo))
     registry.register(RepoTreeTool(args.repo))
     registry.register(ShellTool(args.repo, timeout=config.agent.timeout_seconds))
     registry.register(GitStatusTool(args.repo))
     registry.register(GitDiffTool(args.repo))
 
-    test_runner = TestRunner(args.repo)
+    test_runner = TestRunner(args.repo, test_command=config.agent.test_command)
     verifier = Verifier(test_runner, args.repo)
     recovery_manager = RecoveryManager(model_client)
     context_manager = ContextManager()
