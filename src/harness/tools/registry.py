@@ -1,5 +1,5 @@
 from .base import BaseTool
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 class ToolRegistry:
     def __init__(self):
@@ -8,7 +8,7 @@ class ToolRegistry:
     def register(self, tool: BaseTool):
         self.tools[tool.name] = tool
 
-    def get_tool(self, name: str) -> BaseTool:
+    def get_tool(self, name: str) -> Optional[BaseTool]:
         return self.tools.get(name)
 
     def get_all_schemas(self) -> List[Dict]:

@@ -68,10 +68,16 @@ class Orchestrator:
                     if tool:
                         result = tool.execute(**kwargs)
                         state.tool_history.append({"tool": tool_name, "args": kwargs, "result": result})
-                        self.context_manager.add_tool_result({"tool": tool_name, "result": result})
-                        
-                        if tool_name in ["file_write", "shell"]:
-                            state.phase = "VERIFY"
+                        if result.get("status") == "success":
+                            self.context_manager.add_tool_result({"tool": tool_name, "result": result})
+
+                            if tool_name in ["file_write", "shell"]:
+                                state.phase = "VERIFY"
+                        elif result.get("status") == "error":
+                            error = result.get("error", "Tool execution failed.")
+                            state.errors.append(error)
+                            self.context_manager.add_error(error)
+                            state.phase = "PLAN"
                     else:
                         err = f"Tool {tool_name} not found."
                         state.errors.append(err)
