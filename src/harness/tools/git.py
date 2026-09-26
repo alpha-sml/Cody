@@ -1,6 +1,6 @@
-from .base import BaseTool
+from .base import BaseTool, ToolResult
 import subprocess
-from typing import Dict, Any
+from typing import Any, Dict
 
 class GitStatusTool(BaseTool):
     name = "git_status"
@@ -9,12 +9,20 @@ class GitStatusTool(BaseTool):
     def __init__(self, repo_path: str):
         self.repo_path = repo_path
 
-    def execute(self, **kwargs) -> Dict[str, Any]:
+    def execute(self, **kwargs: Any) -> ToolResult:
         try:
             result = subprocess.run(["git", "status"], cwd=self.repo_path, capture_output=True, text=True)
-            return {"status": "success", "output": result.stdout}
+            if result.returncode != 0:
+                error = result.stderr.strip() or f"git status failed with exit code {result.returncode}"
+                return self.error_result(
+                    error,
+                    output=result.stdout,
+                    stderr=result.stderr,
+                    exit_code=result.returncode
+                )
+            return self.success_result(output=result.stdout)
         except Exception as e:
-            return {"status": "error", "error": str(e)}
+            return self.error_result(str(e), exit_code=-1)
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}}
@@ -26,15 +34,23 @@ class GitDiffTool(BaseTool):
     def __init__(self, repo_path: str):
         self.repo_path = repo_path
 
-    def execute(self, **kwargs) -> Dict[str, Any]:
+    def execute(self, **kwargs: Any) -> ToolResult:
         try:
             result = subprocess.run(["git", "diff"], cwd=self.repo_path, capture_output=True, text=True)
             output = result.stdout
             if len(output) > 10000:
                 output = output[:10000] + "\n...[TRUNCATED DIFF]"
-            return {"status": "success", "output": output}
+            if result.returncode != 0:
+                error = result.stderr.strip() or f"git diff failed with exit code {result.returncode}"
+                return self.error_result(
+                    error,
+                    output=output,
+                    stderr=result.stderr,
+                    exit_code=result.returncode
+                )
+            return self.success_result(output=output)
         except Exception as e:
-            return {"status": "error", "error": str(e)}
+            return self.error_result(str(e), exit_code=-1)
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}}

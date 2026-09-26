@@ -1,6 +1,16 @@
 from .base import BaseTool
 import subprocess
-from typing import Dict, Any
+from typing import Any, Dict
+
+
+def _bounded_output(output: Any) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    if len(output) > 10000:
+        return output[:10000] + "\n...[TRUNCATED]"
+    return output
 
 class ShellTool(BaseTool):
     name = "shell"
@@ -10,7 +20,7 @@ class ShellTool(BaseTool):
         self.repo_path = repo_path
         self.timeout = timeout
 
-    def execute(self, command: str, **kwargs) -> Dict[str, Any]:
+    def execute(self, command: str, **kwargs: Any) -> Dict[str, Any]:
         try:
             result = subprocess.run(
                 command,
@@ -20,25 +30,30 @@ class ShellTool(BaseTool):
                 text=True,
                 timeout=self.timeout
             )
-            
-            stdout = result.stdout
-            if len(stdout) > 10000:
-                stdout = stdout[:10000] + "\n...[TRUNCATED]"
-                
-            stderr = result.stderr
-            if len(stderr) > 10000:
-                stderr = stderr[:10000] + "\n...[TRUNCATED]"
-                
-            return {
-                "status": "success",
-                "stdout": stdout,
-                "stderr": stderr,
-                "exit_code": result.returncode
-            }
-        except subprocess.TimeoutExpired:
-            return {"status": "error", "error": "Command timed out", "exit_code": -1}
+
+            stdout = _bounded_output(result.stdout)
+            stderr = _bounded_output(result.stderr)
+            if result.returncode != 0:
+                error = stderr.strip() or f"Command exited with code {result.returncode}"
+                return self.error_result(
+                    error,
+                    stdout=stdout,
+                    stderr=stderr,
+                    exit_code=result.returncode
+                )
+
+            return self.success_result(stdout=stdout, stderr=stderr, exit_code=result.returncode)
+        except subprocess.TimeoutExpired as e:
+            stdout = _bounded_output(e.stdout)
+            stderr = _bounded_output(e.stderr)
+            return self.error_result(
+                "Command timed out",
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=-1
+            )
         except Exception as e:
-            return {"status": "error", "error": str(e), "exit_code": -1}
+            return self.error_result(str(e), exit_code=-1)
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
