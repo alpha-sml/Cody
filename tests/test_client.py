@@ -2,6 +2,8 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 from src.harness.model.providers.google import GoogleClient
+from src.harness.model.providers.deepseek import DeepSeekClient
+from src.harness.model.providers.qwen import QwenClient
 from src.harness.model.boundary import validate_action, extract_json
 
 def test_google_client_function_call_parsing():
@@ -165,3 +167,145 @@ def test_validate_action_invalid_argument_type():
     res = validate_action(action, tools=tools)
     assert res["action"] == "error"
     assert res["error_type"] == "invalid_argument_type"
+
+def test_deepseek_client_function_call_parsing():
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "file_write",
+                                "arguments": "{\"path\": \"test.py\", \"content\": \"print('hello')\"}"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    tools = [{"name": "file_write", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}]
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test prompt", tools=tools)
+    assert action == {"action": "tool_call", "tool": "file_write", "arguments": {"path": "test.py", "content": "print('hello')"}}
+
+def test_deepseek_client_json_text_parsing():
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": "```json\n{\"action\": \"finish\", \"result\": \"done\"}\n```"
+                }
+            }
+        ]
+    }
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test prompt")
+    assert action == {"action": "finish", "result": "done"}
+
+def test_deepseek_client_timeout():
+    import requests
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    with patch('requests.post', side_effect=requests.exceptions.Timeout):
+        action = client.generate("test")
+    assert action["action"] == "error"
+    assert action["error_type"] == "model_api_timeout"
+
+def test_deepseek_client_provider_error():
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.text = "Internal Server Error"
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test")
+    assert action["action"] == "error"
+    assert action["error_type"] == "model_api_error"
+
+def test_deepseek_client_malformed_response():
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"choices": []} # No choices
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test")
+    assert action["action"] == "error"
+    assert action["error_type"] == "model_api_error"
+
+def test_qwen_client_function_call_parsing():
+    client = QwenClient(api_key="fake", model_name="qwen-max")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "file_write",
+                                "arguments": "{\"path\": \"test.py\", \"content\": \"print('hello')\"}"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    tools = [{"name": "file_write", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}]
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test prompt", tools=tools)
+    assert action == {"action": "tool_call", "tool": "file_write", "arguments": {"path": "test.py", "content": "print('hello')"}}
+
+def test_qwen_client_json_text_parsing():
+    client = QwenClient(api_key="fake", model_name="qwen-max")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": "```json\n{\"action\": \"finish\", \"result\": \"done\"}\n```"
+                }
+            }
+        ]
+    }
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test prompt")
+    assert action == {"action": "finish", "result": "done"}
+
+def test_qwen_client_timeout():
+    import requests
+    client = QwenClient(api_key="fake", model_name="qwen-max")
+    with patch('requests.post', side_effect=requests.exceptions.Timeout):
+        action = client.generate("test")
+    assert action["action"] == "error"
+    assert action["error_type"] == "model_api_timeout"
+
+def test_qwen_client_provider_error():
+    client = QwenClient(api_key="fake", model_name="qwen-max")
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.text = "Internal Server Error"
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test")
+    assert action["action"] == "error"
+    assert action["error_type"] == "model_api_error"
+
+def test_qwen_client_malformed_response():
+    client = QwenClient(api_key="fake", model_name="qwen-max")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"choices": []} # No choices
+    with patch('requests.post', return_value=mock_response):
+        action = client.generate("test")
+    assert action["action"] == "error"
+    assert action["error_type"] == "model_api_error"

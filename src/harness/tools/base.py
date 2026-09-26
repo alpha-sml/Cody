@@ -8,6 +8,7 @@ ToolSchema = Dict[str, Any]
 class BaseTool(ABC):
     name: str = ""
     description: str = ""
+    category: str = "READ_ONLY"
 
     @abstractmethod
     def execute(self, **kwargs: Any) -> ToolResult:
@@ -27,5 +28,6 @@ class BaseTool(ABC):
         return {
             "name": self.name,
             "description": self.description,
+            "category": self.category,
             "parameters": self.get_parameters_schema()
         }

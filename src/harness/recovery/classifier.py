@@ -23,6 +23,10 @@ def classify_failure(evidence: Dict[str, Any]) -> Dict[str, Any]:
             category = "type_error"
         elif "filenotfounderror" in full_text or "no such file" in full_text:
             category = "file_error"
+        elif "patch failed" in full_text or "hunk" in full_text or "malformed patch" in full_text or "reject" in full_text:
+            category = "patch_failure"
+        elif "pip install" in command.lower() or "dependency" in full_text:
+            category = "dependency_error"
         else:
             category = "test_failure" if "test" in command.lower() or "pytest" in command.lower() or "assert " in full_text else "shell_error"
     elif "syntaxerror" in full_text or "indentationerror" in full_text:
@@ -33,6 +37,10 @@ def classify_failure(evidence: Dict[str, Any]) -> Dict[str, Any]:
         category = "type_error"
     elif "filenotfounderror" in full_text or "no such file" in full_text:
         category = "file_error"
+    elif "patch failed" in full_text or "hunk" in full_text or "malformed patch" in full_text or "reject" in full_text:
+        category = "patch_failure"
+    elif "pip install" in command.lower() or "dependency" in full_text:
+        category = "dependency_error"
     elif exit_code != 0:
         if "command not found" in full_text:
             category = "environment_error"

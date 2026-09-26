@@ -42,4 +42,4 @@ class RecoveryManager:
                 "message": "Recovery model returned a malformed response: expected a dictionary."
             }
 
-        return validate_action(response)
+        return validate_action(response, tools=tools)

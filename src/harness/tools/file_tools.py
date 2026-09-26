@@ -69,6 +69,7 @@ class FileReadTool(BaseTool):
 class FileWriteTool(BaseTool):
     name = "file_write"
     description = "Write or overwrite content to a file."
+    category = "MUTATING"
 
     def __init__(self, repo_path: str):
         self.repo_path = repo_path
@@ -165,6 +166,7 @@ class RepoTreeTool(BaseTool):
 class ApplyPatchTool(BaseTool):
     name = "apply_patch"
     description = "Apply a targeted unified diff patch to an existing repository file."
+    category = "MUTATING"
 
     def __init__(self, repo_path: str):
         self.repo_path = repo_path

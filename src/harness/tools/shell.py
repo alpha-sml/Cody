@@ -15,6 +15,7 @@ def _bounded_output(output: Any) -> str:
 class ShellTool(BaseTool):
     name = "shell"
     description = "Execute a shell command in the repository workspace."
+    category = "MUTATING"
 
     def __init__(self, repo_path: str, timeout: int = 30):
         self.repo_path = repo_path
