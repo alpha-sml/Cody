@@ -194,6 +194,46 @@ def test_normal_success_call_sequence_keeps_planner_context():
     assert "inspect, then update the target" in model.prompts[1]
 
 
+def test_evaluation_report_records_run_evidence():
+    model = CountingModel([{"action": "tool_call", "tool": "file_write", "arguments": {}}])
+    registry = ToolRegistry()
+    registry.register(MockTool())
+    class RepoTreeMock(MockTool):
+        name = "repo_tree"
+    class FileWriteMock(MockTool):
+        name = "file_write"
+    registry.register(RepoTreeMock())
+    registry.register(FileWriteMock())
+    verifier = MockVerifier(changed_files=["changed.py"])
+    state = State(
+        task="Change a file",
+        evaluation_report={"model_provider": "mock", "model_name": "test-model"},
+    )
+    orchestrator = Orchestrator(
+        model,
+        registry,
+        verifier,
+        RecoveryManager(model),
+        ContextManager(),
+        Planner(model),
+    )
+
+    final_state = orchestrator.run(state)
+
+    report = final_state.evaluation_report
+    assert report["final_status"] == "success"
+    assert report["model_provider"] == "mock"
+    assert report["model_name"] == "test-model"
+    assert report["model_calls"] == {"planner": 1, "execution": 1, "recovery": 0}
+    assert report["model_call_count"] == 2
+    assert report["tool_calls"] == 1
+    assert report["verification_attempts"] == 1
+    assert report["recovery_attempts"] == 0
+    assert report["changed_files"] == ["changed.py"]
+    assert report["completion_status"] == "VERIFIED_SUCCESS"
+    assert report["test_result"]["tests_passed"] is True
+
+
 def test_recovery_call_sequence_adds_one_model_call_per_recovery():
     model = CountingModel([
         {"action": "finish", "result": "initial"},

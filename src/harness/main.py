@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 from .config import load_config
 from .state import State
@@ -61,13 +62,18 @@ def main():
 
     state = State(
         task=args.task,
-        repo_path=args.repo
+        repo_path=args.repo,
+        evaluation_report={
+            "model_provider": config.model.provider,
+            "model_name": config.model.name,
+        },
     )
 
     print(f"Starting harness for task: {args.task}")
     final_state = orchestrator.run(state)
     print(f"Finished with status: {final_state.status}")
     print(f"Final Result: {final_state.final_result}")
+    print(f"Evaluation: {json.dumps(final_state.evaluation_report, sort_keys=True)}")
 
 if __name__ == "__main__":
     main()

@@ -33,6 +33,49 @@ class Orchestrator:
         state.errors.append(error)
         self.context_manager.add_error(error)
 
+    def _start_evaluation_report(self, state: State):
+        report = state.evaluation_report
+        model_provider = report.get("model_provider")
+        model_name = report.get("model_name")
+        if not model_provider:
+            model_provider = type(self.model_client).__module__.split(".")[-1]
+        report.clear()
+        report.update({
+            "task": state.task,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "model_calls": {"planner": 0, "execution": 0, "recovery": 0},
+            "model_call_count": 0,
+            "tool_calls": 0,
+            "verification_attempts": 0,
+            "recovery_attempts": 0,
+            "changed_files": [],
+            "completion_status": None,
+            "final_status": "running",
+            "errors": [],
+        })
+
+    def _count_model_call(self, state: State, phase: str):
+        calls = state.evaluation_report["model_calls"]
+        calls[phase] += 1
+        state.evaluation_report["model_call_count"] += 1
+
+    def _finish_evaluation_report(self, state: State):
+        report = state.evaluation_report
+        report["final_status"] = state.status
+        report["recovery_attempts"] = state.recovery_attempts
+        report["verification_attempts"] = len(state.verification_results)
+        report["changed_files"] = list(state.changed_files)
+        report["errors"] = list(state.errors[-5:])
+        if state.verification_results:
+            latest = state.verification_results[-1]
+            report["completion_status"] = latest.get("completion_status")
+            report["test_result"] = {
+                "status": latest.get("status"),
+                "tests_passed": latest.get("tests_passed"),
+                "exit_code": latest.get("exit_code"),
+            }
+
     def _capture_baseline(self, state: State):
         capture = getattr(self.verifier, "capture_baseline", None)
         if callable(capture):
@@ -109,6 +152,7 @@ class Orchestrator:
             self._record_error(state, error_msg)
             state.phase = "PLAN"
         elif action.get("action") == "tool_call":
+            state.evaluation_report["tool_calls"] += 1
             tool_name = action.get("tool")
             kwargs = action.get("arguments", {})
 
@@ -162,6 +206,7 @@ class Orchestrator:
     def run(self, state: State) -> State:
         state.status = "running"
         state.phase = "INITIALIZE"
+        self._start_evaluation_report(state)
 
         while state.status == "running":
             current_phase = state.phase
@@ -190,6 +235,7 @@ class Orchestrator:
             elif current_phase == "PLAN":
                 state.context = self.context_manager.get_context_dict()
                 try:
+                    self._count_model_call(state, "planner")
                     state.plan = self.planner.update_plan(state)
                 except ValueError as exc:
                     self._record_error(state, f"Planner update failed: {exc}")
@@ -208,6 +254,7 @@ class Orchestrator:
                 sys_prompt = "You are an autonomous coding agent. Use available tools to complete the task."
                 prompt = f"Task: {state.task}\nContext: {json.dumps(state.context)}\nPlan: {state.plan}\nChoose next tool_call or finish."
 
+                self._count_model_call(state, "execution")
                 action = self.model_client.generate(
                     prompt,
                     system_prompt=sys_prompt,
@@ -217,6 +264,7 @@ class Orchestrator:
                 state.iteration += 1
 
             elif current_phase == "VERIFY":
+                state.evaluation_report["verification_attempts"] += 1
                 verif_res = self.verifier.verify()
                 state.verification_results.append(verif_res)
                 changed_files = verif_res.get("changed_files", [])
@@ -244,6 +292,7 @@ class Orchestrator:
                     break
 
                 last_verif = state.verification_results[-1] if state.verification_results else {}
+                self._count_model_call(state, "recovery")
                 recovery_action = self.recovery_manager.recover(
                     state,
                     last_verif,
@@ -254,4 +303,5 @@ class Orchestrator:
                 self._handle_action(recovery_action, state)
                 state.iteration += 1
 
+        self._finish_evaluation_report(state)
         return state

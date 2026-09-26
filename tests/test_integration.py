@@ -152,6 +152,28 @@ def test_file_write_flow_verifies_and_tracks_changed_file(tmp_path):
     assert verifier.test_runner.calls == 1
 
 
+def test_generic_investigation_task_can_find_and_fix_target(tmp_path):
+    repo = str(tmp_path)
+    target = tmp_path / "auth.py"
+    target.write_text("return False\n")
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {"action": "tool_call", "tool": "file_search", "arguments": {"pattern": "return False"}},
+            {"action": "tool_call", "tool": "file_read", "arguments": {"path": "auth.py"}},
+            {"action": "tool_call", "tool": "file_write", "arguments": {"path": "auth.py", "content": "return True\n"}},
+        ],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    state = orchestrator.run(State(task="Fix the authentication bug", repo_path=repo))
+
+    assert state.status == "success"
+    assert target.read_text() == "return True\n"
+    assert state.changed_files == ["auth.py"]
+    assert state.verification_results[0]["completion_status"] == "VERIFIED_SUCCESS"
+
+
 def test_apply_patch_flow_changes_file_and_verifies(tmp_path):
     repo = str(tmp_path)
     initialize_git_repo(repo)

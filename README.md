@@ -51,6 +51,11 @@ MOCK_MODEL=true make run ARGS="--task 'test_write'"
 
 Mock mode avoids provider credentials and is deterministic for local smoke tests.
 
+The CLI prints an `Evaluation` JSON summary after each run. It includes the task,
+configured provider/model, planner/execution/recovery call counts, tool and
+verification counts, recovery attempts, changed files, test result, completion
+status, final status, and bounded errors. It never includes API keys.
+
 ## Configuration
 `config/config.yaml` contains limits for iterations, recovery attempts, and model selection.
 Successful completion requires passing verification plus repository evidence of
