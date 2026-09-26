@@ -186,3 +186,201 @@ def test_member2_integration(tmp_path):
     v_res = verifier.verify()
     assert v_res["verified"] is True
     assert v_res["tests_passed"] is True
+
+from src.harness.planner import Planner
+from src.harness.state import State
+from src.harness.recovery.recovery import RecoveryManager
+
+def test_planner_validation():
+    class BadPlannerModel(MockClient):
+        def __init__(self, action, result=None):
+            self.action = action
+            self.result = result
+        def generate(self, prompt, **kwargs):
+            if self.action == "string": return "just a string"
+            if self.action == "empty": return {"action": "finish", "result": ""}
+            if self.action == "error": return {"action": "error", "message": "boom"}
+            if self.action == "bad_action": return {"action": "tool_call"}
+            return {"action": "finish", "result": self.result}
+
+    state = State(task="Test")
+
+    # 1. string response
+    planner = Planner(BadPlannerModel("string"))
+    with pytest.raises(ValueError, match="expected a dictionary"):
+        planner.update_plan(state)
+
+    # 2. empty plan
+    planner = Planner(BadPlannerModel("empty"))
+    with pytest.raises(ValueError, match="missing valid 'result'"):
+        planner.update_plan(state)
+
+    # 3. error action
+    planner = Planner(BadPlannerModel("error"))
+    with pytest.raises(ValueError, match="boom"):
+        planner.update_plan(state)
+
+    # 4. bad action type
+    planner = Planner(BadPlannerModel("bad_action"))
+    with pytest.raises(ValueError, match="expected 'finish'"):
+        planner.update_plan(state)
+
+    # 5. valid
+    planner = Planner(BadPlannerModel("valid", "1. Do this\n2. Do that"))
+    plan = planner.update_plan(state)
+    assert plan == ["1. Do this", "2. Do that"]
+
+from src.harness.model.client import validate_action
+
+def test_model_validation():
+    # finish missing result
+    res = validate_action({"action": "finish"})
+    assert res["action"] == "error"
+
+    # tool_call missing tool
+    res = validate_action({"action": "tool_call", "arguments": {}})
+    assert res["action"] == "error"
+
+    # tool_call empty tool
+    res = validate_action({"action": "tool_call", "tool": "  ", "arguments": {}})
+    assert res["action"] == "error"
+
+    # tool_call arguments not dict
+    res = validate_action({"action": "tool_call", "tool": "test", "arguments": []})
+    assert res["action"] == "error"
+
+def test_google_client_malformed_responses():
+    client = GoogleClient("fake", "gemini-pro")
+
+    def _mock_post(json_data):
+        class MockResponse:
+            status_code = 200
+            def json(self): return json_data
+        return MockResponse()
+
+    # missing candidates
+    with patch("requests.post", return_value=_mock_post({})):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "No candidates" in res["message"]
+
+    # empty candidates
+    with patch("requests.post", return_value=_mock_post({"candidates": []})):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "No candidates" in res["message"]
+
+    # missing content
+    with patch("requests.post", return_value=_mock_post({"candidates": [{}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "No content" in res["message"]
+
+    # empty/missing parts
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"role": "model"}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "No parts" in res["message"]
+
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": []}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "No parts" in res["message"]
+
+    # part with neither functionCall nor valid text
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"empty": "part"}]}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "No valid functionCall or text" in res["message"]
+
+    # functionCall that is not a dict
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": "not dict"}]}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "Malformed functionCall structure" in res["message"]
+
+    # functionCall with missing name
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": {"args": {}}}]}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "non-empty string" in res["message"]
+
+    # functionCall with empty name
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": {"name": "", "args": {}}}]}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "non-empty string" in res["message"]
+
+    # functionCall with args that are not a dict
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"functionCall": {"name": "test", "args": []}}]}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "dict 'arguments'" in res["message"]
+
+    # malformed/unexpected response structure (e.g. text is not a string)
+    with patch("requests.post", return_value=_mock_post({"candidates": [{"content": {"parts": [{"text": 123}]}}] })):
+        res = client.generate("test")
+        assert res["action"] == "error"
+        assert "No valid functionCall or text found" in res["message"]
+
+def test_recovery_validation_extended():
+    class CapturingModel(MockClient):
+        def __init__(self, return_val):
+            self.return_val = return_val
+            self.last_prompt = None
+            self.last_tools = None
+
+        def generate(self, prompt, **kwargs):
+            self.last_prompt = prompt
+            self.last_tools = kwargs.get("tools")
+            return self.return_val
+
+    # 1. capture arguments
+    model = CapturingModel({"action": "finish", "result": "done"})
+    recovery = RecoveryManager(model)
+
+    state = State(task="The Task", plan=["1", "2"])
+    state.context = {"foo": "bar"}
+    failure_details = {"error": "boom"}
+    tools = [{"name": "fake_tool"}]
+
+    recovery.recover(state, failure_details, tools=tools)
+
+    assert "The Task" in model.last_prompt
+    assert "['1', '2']" in model.last_prompt
+    assert "foo" in model.last_prompt
+    assert "boom" in model.last_prompt
+    assert model.last_tools == tools
+
+    # 2. recovery model returning {"action": "error", ...}
+    model = CapturingModel({"action": "error", "error_type": "some_err", "message": "msg"})
+    recovery = RecoveryManager(model)
+    res = recovery.recover(state, {})
+    assert res["action"] == "error"
+    assert res["error_type"] == "some_err"
+
+    # 3. malformed tool_call
+    model = CapturingModel({"action": "tool_call", "tool": ""})
+    recovery = RecoveryManager(model)
+    res = recovery.recover(state, {})
+    assert res["action"] == "error"
+    assert res["error_type"] == "invalid_model_action"
+
+    # 4. malformed finish
+    model = CapturingModel({"action": "finish"})
+    recovery = RecoveryManager(model)
+    res = recovery.recover(state, {})
+    assert res["action"] == "error"
+    assert res["error_type"] == "invalid_model_action"
+
+    # 5. valid recovery tool_call
+    model = CapturingModel({"action": "tool_call", "tool": "fix", "arguments": {}})
+    recovery = RecoveryManager(model)
+    res = recovery.recover(state, {})
+    assert res["action"] == "tool_call"
+
+    # 6. valid recovery finish
+    model = CapturingModel({"action": "finish", "result": "done"})
+    recovery = RecoveryManager(model)
+    res = recovery.recover(state, {})
+    assert res["action"] == "finish"
