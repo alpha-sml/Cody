@@ -42,7 +42,7 @@ def validate_model_name(model_name: str) -> str:
 SUPPORTED_PROVIDERS = frozenset(["deepseek", "qwen"])
 
 DEFAULT_PROVIDER_MODELS = {
-    "deepseek": "deepseek-v4-flash",
+    "deepseek": "deepseek-flash",
     "qwen": "qwen-plus",
 }
 
@@ -72,7 +72,7 @@ def validate_model_for_provider(model_name: str, provider: str) -> None:
         if not m_lower.startswith("deepseek"):
             raise ValueError(
                 f"Invalid model '{model_name}' for provider 'deepseek'. "
-                f"Expected a deepseek model family member (e.g. deepseek-v4-flash, deepseek-chat)."
+                f"Expected a deepseek model family member (e.g. deepseek-flash, deepseek-chat)."
             )
     elif provider == "qwen":
         if not m_lower.startswith("qwen"):
@@ -88,16 +88,25 @@ def get_client(model_name: str = "", provider: str = "deepseek") -> BaseModelCli
     Resolution order:
       1. CODY_PROVIDER env var (explicit – highest precedence)
       2. ``provider`` argument (from CLI or config)
-      3. Inferred from CODY_MODEL / model_name prefix when CODY_PROVIDER is absent
+      3. Inferred from CODY_MODEL / CODY_LOCKED_MODEL prefix when CODY_PROVIDER is absent
       4. Default provider argument value ('deepseek')
     """
     explicit_provider_env = os.environ.get("CODY_PROVIDER", "").strip()
     env_model = os.environ.get("CODY_MODEL", "").strip()
+    locked_model = os.environ.get("CODY_LOCKED_MODEL", "").strip()
 
     # Track whether the model was supplied via env var (inference is relevant only then)
     model_from_env = bool(env_model)
 
-    if env_model:
+    if locked_model:
+        explicit_candidate = env_model or model_name.strip()
+        if explicit_candidate and explicit_candidate != locked_model:
+            raise ValueError(
+                f"Attempted arbitrary model override '{explicit_candidate}' rejected: "
+                f"evaluation model is locked to '{locked_model}'."
+            )
+        model_name = locked_model
+    elif env_model:
         model_name = env_model
     else:
         model_name = model_name.strip()
@@ -109,13 +118,13 @@ def get_client(model_name: str = "", provider: str = "deepseek") -> BaseModelCli
     else:
         # Normalise the argument-level provider (config/CLI default)
         provider = provider.lower().strip()
-        # When CODY_PROVIDER is absent AND the model came from the CODY_MODEL env var,
+        # When CODY_PROVIDER is absent AND the model came from CODY_MODEL or CODY_LOCKED_MODEL,
         # infer the provider from the model name prefix.  This lets users configure
-        # Cody with only CODY_MODEL=qwen-plus (no CODY_PROVIDER needed).
+        # Cody with only CODY_MODEL=qwen-plus or CODY_LOCKED_MODEL=qwen-plus (no CODY_PROVIDER needed).
         # We do NOT infer when the model was passed as a direct function argument
-        # so that explicit get_client("deepseek-v4-flash", "qwen") still raises a
+        # so that explicit get_client("deepseek-flash", "qwen") still raises a
         # clear validate_model_for_provider error rather than silently switching.
-        if model_from_env:
+        if model_from_env or locked_model:
             inferred = _infer_provider_from_model(model_name)
             if inferred:
                 provider = inferred
@@ -126,16 +135,6 @@ def get_client(model_name: str = "", provider: str = "deepseek") -> BaseModelCli
             f"Unknown provider: '{provider}'. Supported evaluation providers are: "
             f"{', '.join(sorted(SUPPORTED_PROVIDERS))}."
         )
-
-    # Locked evaluation mode enforcement
-    locked_model = os.environ.get("CODY_LOCKED_MODEL", "").strip()
-    if locked_model:
-        if model_name and model_name != locked_model:
-            raise ValueError(
-                f"Attempted arbitrary model override '{model_name}' rejected: "
-                f"evaluation model is locked to '{locked_model}'."
-            )
-        model_name = locked_model
 
     is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true" or provider == "mock"
     if is_mock:

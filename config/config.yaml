@@ -1,6 +1,6 @@
 model:
   # Supported evaluation providers: "deepseek" (default) or "qwen"
-  name: "deepseek-v4-flash"
+  name: "deepseek-flash"
   provider: "deepseek"
   max_tokens: 8192
 

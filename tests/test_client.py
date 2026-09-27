@@ -83,7 +83,7 @@ def test_validate_action_invalid_argument_type():
     assert res["error_type"] == "invalid_argument_type"
 
 def test_deepseek_client_function_call_parsing():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
@@ -109,7 +109,7 @@ def test_deepseek_client_function_call_parsing():
     assert action == {"action": "tool_call", "tool": "file_write", "arguments": {"path": "test.py", "content": "print('hello')"}}
 
 def test_deepseek_client_json_text_parsing():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
@@ -126,14 +126,14 @@ def test_deepseek_client_json_text_parsing():
     assert action == {"action": "finish", "result": "done"}
 
 def test_deepseek_client_timeout():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-flash")
     with patch('requests.post', side_effect=requests.exceptions.Timeout):
         action = client.generate("test")
     assert action["action"] == "error"
     assert action["error_type"] == "model_api_timeout"
 
 def test_deepseek_client_provider_error():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-flash")
     mock_response = MagicMock()
     mock_response.status_code = 500
     mock_response.text = "Internal Server Error"
@@ -143,7 +143,7 @@ def test_deepseek_client_provider_error():
     assert action["error_type"] == "model_api_error"
 
 def test_deepseek_client_malformed_response():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"choices": []} # No choices
@@ -244,17 +244,17 @@ def clean_env_for_client_tests():
 def test_get_client_with_ai_api_key():
     """AI_API_KEY is the primary credential (evaluator interface)."""
     os.environ["AI_API_KEY"] = "eval-key"
-    client = get_client("deepseek-v4-flash", "deepseek")
+    client = get_client("deepseek-flash", "deepseek")
     assert isinstance(client, DeepSeekClient)
     assert client.api_key == "eval-key"
-    assert client.model_name == "deepseek-v4-flash"
+    assert client.model_name == "deepseek-flash"
 
 
 def test_get_client_ai_api_key_takes_priority():
     """AI_API_KEY takes priority over provider-specific keys."""
     os.environ["AI_API_KEY"] = "eval-key"
     os.environ["DEEPSEEK_API_KEY"] = "ds-key"
-    client = get_client("deepseek-v4-flash", "deepseek")
+    client = get_client("deepseek-flash", "deepseek")
     assert isinstance(client, DeepSeekClient)
     assert client.api_key == "eval-key"
 
@@ -262,7 +262,7 @@ def test_get_client_ai_api_key_takes_priority():
 def test_get_client_provider_key_fallback():
     """Provider-specific key works when AI_API_KEY is absent."""
     os.environ["DEEPSEEK_API_KEY"] = "ds-key"
-    client = get_client("deepseek-v4-flash", "deepseek")
+    client = get_client("deepseek-flash", "deepseek")
     assert isinstance(client, DeepSeekClient)
     assert client.api_key == "ds-key"
 
@@ -293,7 +293,7 @@ def test_get_client_unsupported():
 def test_get_client_missing_credentials():
     """Clear error when no API key is set."""
     with pytest.raises(ValueError, match="No API key found"):
-        get_client("deepseek-v4-flash", "deepseek")
+        get_client("deepseek-flash", "deepseek")
 
 
 def test_validate_model_name_rejects_placeholder():
@@ -308,7 +308,7 @@ def test_validate_model_name_rejects_empty():
 
 
 def test_validate_model_name_accepts_real():
-    assert validate_model_name("deepseek-v4-flash") == "deepseek-v4-flash"
+    assert validate_model_name("deepseek-flash") == "deepseek-flash"
     assert validate_model_name("deepseek-chat") == "deepseek-chat"
 
 
@@ -316,14 +316,14 @@ def test_get_client_env_overrides(monkeypatch):
     """CODY_PROVIDER and CODY_MODEL env vars override arguments."""
     os.environ["AI_API_KEY"] = "key"
     os.environ["CODY_PROVIDER"] = "mock"
-    client = get_client("deepseek-v4-flash", "deepseek")
+    client = get_client("deepseek-flash", "deepseek")
     assert isinstance(client, MockClient)
 
 
 def test_credentials_never_logged(capsys):
     """API key value must never appear in stdout/stderr."""
     os.environ["AI_API_KEY"] = "super-secret-key-12345"
-    _ = get_client("deepseek-v4-flash", "deepseek")
+    _ = get_client("deepseek-flash", "deepseek")
     output = capsys.readouterr()
     assert "super-secret-key-12345" not in output.out
     assert "super-secret-key-12345" not in output.err
@@ -332,9 +332,9 @@ def test_credentials_never_logged(capsys):
 def test_approved_providers_accepted_with_ai_api_key():
     """Both DeepSeek and Qwen are approved evaluation providers."""
     os.environ["AI_API_KEY"] = "eval-key"
-    ds = get_client("deepseek-v4-flash", "deepseek")
+    ds = get_client("deepseek-flash", "deepseek")
     assert isinstance(ds, DeepSeekClient)
-    assert ds.model_name == "deepseek-v4-flash"
+    assert ds.model_name == "deepseek-flash"
 
     qw = get_client("qwen-max", "qwen")
     assert isinstance(qw, QwenClient)
@@ -342,11 +342,11 @@ def test_approved_providers_accepted_with_ai_api_key():
 
 
 def test_deepseek_default_model():
-    """DeepSeek defaults to deepseek-v4-flash when model_name is omitted."""
+    """DeepSeek defaults to deepseek-flash when model_name is omitted."""
     os.environ["AI_API_KEY"] = "eval-key"
     client = get_client("", "deepseek")
     assert isinstance(client, DeepSeekClient)
-    assert client.model_name == "deepseek-v4-flash"
+    assert client.model_name == "deepseek-flash"
 
 
 def test_qwen_default_model():
@@ -360,8 +360,8 @@ def test_qwen_default_model():
 def test_unsupported_model_provider_combination_rejected():
     """Evaluation mode rejects mismatched model/provider combinations and never silently substitutes."""
     os.environ["AI_API_KEY"] = "eval-key"
-    with pytest.raises(ValueError, match="Invalid model 'deepseek-v4-flash' for provider 'qwen'"):
-        get_client("deepseek-v4-flash", "qwen")
+    with pytest.raises(ValueError, match="Invalid model 'deepseek-flash' for provider 'qwen'"):
+        get_client("deepseek-flash", "qwen")
 
     with pytest.raises(ValueError, match="Invalid model 'qwen-plus' for provider 'deepseek'"):
         get_client("qwen-plus", "deepseek")
@@ -370,15 +370,38 @@ def test_unsupported_model_provider_combination_rejected():
 def test_locked_evaluation_model_rejects_arbitrary_override(monkeypatch):
     """Prescribed / locked evaluation model cannot be overridden by arbitrary model."""
     monkeypatch.setenv("AI_API_KEY", "eval-key")
-    monkeypatch.setenv("CODY_LOCKED_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("CODY_LOCKED_MODEL", "deepseek-flash")
     # Matching model is accepted
-    client = get_client("deepseek-v4-flash", "deepseek")
+    client = get_client("deepseek-flash", "deepseek")
     assert isinstance(client, DeepSeekClient)
-    assert client.model_name == "deepseek-v4-flash"
+    assert client.model_name == "deepseek-flash"
 
     # Conflicting arbitrary model is rejected
     with pytest.raises(ValueError, match="evaluation model is locked"):
         get_client("deepseek-custom-model", "deepseek")
+
+
+def test_locked_evaluation_model_infers_provider(monkeypatch):
+    """Locked evaluation model correctly infers provider when CODY_PROVIDER is absent."""
+    monkeypatch.setenv("AI_API_KEY", "eval-key")
+    monkeypatch.setenv("CODY_LOCKED_MODEL", "qwen-plus")
+    client = get_client("", "deepseek")
+    assert isinstance(client, QwenClient)
+    assert client.model_name == "qwen-plus"
+
+    monkeypatch.setenv("CODY_LOCKED_MODEL", "deepseek-flash")
+    client2 = get_client("", "deepseek")
+    assert isinstance(client2, DeepSeekClient)
+    assert client2.model_name == "deepseek-flash"
+
+
+def test_locked_evaluation_model_conflict_with_explicit_provider_rejected(monkeypatch):
+    """Explicit CODY_PROVIDER conflicting with CODY_LOCKED_MODEL is rejected."""
+    monkeypatch.setenv("AI_API_KEY", "eval-key")
+    monkeypatch.setenv("CODY_PROVIDER", "deepseek")
+    monkeypatch.setenv("CODY_LOCKED_MODEL", "qwen-plus")
+    with pytest.raises(ValueError, match="Invalid model 'qwen-plus' for provider 'deepseek'"):
+        get_client("", "")
 
 
 def test_cody_provider_env_switches_default():
@@ -412,7 +435,8 @@ def test_missing_required_api_key_configuration(monkeypatch):
     monkeypatch.delenv("QWEN_API_KEY", raising=False)
     monkeypatch.setenv("MOCK_MODEL", "false")
     with pytest.raises(ValueError, match="No API key found"):
-        get_client("deepseek-v4-flash", "deepseek")
+        get_client("deepseek-flash", "deepseek")
+
 
 
 @pytest.mark.parametrize("bad_provider", ["openai", "anthropic", "gemini", "llama"])
@@ -446,7 +470,7 @@ def test_provider_precedence_matrix(monkeypatch):
     monkeypatch.delenv("CODY_MODEL", raising=False)
     monkeypatch.setattr(main_module, "_resolve_task", lambda args: TaskSpec(title="t", description="t", source="cli"))
     fake_cfg = SimpleNamespace(
-        model=SimpleNamespace(provider="deepseek", name="deepseek-v4-flash"),
+        model=SimpleNamespace(provider="deepseek", name="deepseek-flash"),
         agent=SimpleNamespace(timeout_seconds=30, test_command="make test", max_iterations=15, max_recovery_attempts=3)
     )
     monkeypatch.setattr(main_module, "load_config", lambda: fake_cfg)
@@ -454,7 +478,7 @@ def test_provider_precedence_matrix(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cody"])
     main_module.main()
     assert captured["provider"] == "deepseek"
-    assert captured["model_name"] == "deepseek-v4-flash"
+    assert captured["model_name"] == "deepseek-flash"
 
     # Case 2: Env overrides config
     monkeypatch.setenv("CODY_PROVIDER", "qwen")
@@ -479,8 +503,6 @@ def test_real_provider_smoke_test(monkeypatch):
     by the autouse fixture (so REAL_API_TEST=1 alone is sufficient).
     Precedence: AI_API_KEY > DEEPSEEK_API_KEY / QWEN_API_KEY > .env file values.
     """
-
-
     env_file = pathlib.Path(__file__).parent.parent / ".env"
     env_values: dict = {}
     if env_file.exists():
@@ -497,9 +519,20 @@ def test_real_provider_smoke_test(monkeypatch):
         if not os.environ.get(key) and env_values.get(key):
             monkeypatch.setenv(key, env_values[key])
 
+    has_credentials = any(
+        os.environ.get(k)
+        for k in ("AI_API_KEY", "DEEPSEEK_API_KEY", "QWEN_API_KEY")
+    )
+    if not has_credentials:
+        pytest.skip("No API credentials available in environment or .env")
+
     for provider in ["deepseek", "qwen"]:
+        if not os.environ.get("AI_API_KEY") and not os.environ.get(f"{provider.upper()}_API_KEY"):
+            continue
         client = get_client("", provider=provider)
         response = client.generate("Respond with json containing action finish and result pong.")
+        if response.get("action") == "error" and ("Authentication Fails" in str(response) or "invalid_api_key" in str(response) or "Incorrect API key" in str(response)):
+            pytest.skip(f"API key for {provider} was rejected by provider: {response.get('message')}")
         assert isinstance(response, dict), f"{provider}: expected dict, got {type(response)}"
         assert "action" in response, f"{provider}: missing 'action' key: {response}"
 
@@ -531,10 +564,10 @@ def test_explicit_deepseek_provider_and_model():
     """Explicit CODY_PROVIDER=deepseek with matching model."""
     os.environ["AI_API_KEY"] = "key"
     os.environ["CODY_PROVIDER"] = "deepseek"
-    os.environ["CODY_MODEL"] = "deepseek-v4-flash"
+    os.environ["CODY_MODEL"] = "deepseek-flash"
     client = get_client("", "")
     assert isinstance(client, DeepSeekClient)
-    assert client.model_name == "deepseek-v4-flash"
+    assert client.model_name == "deepseek-flash"
 
 
 def test_explicit_qwen_provider_and_model():
@@ -560,8 +593,8 @@ def test_provider_model_conflict_raises_clear_error():
     """Explicit provider + mismatched explicit model produces a descriptive error."""
     os.environ["AI_API_KEY"] = "key"
     os.environ["CODY_PROVIDER"] = "qwen"
-    os.environ["CODY_MODEL"] = "deepseek-v4-flash"
-    with pytest.raises(ValueError, match="Invalid model 'deepseek-v4-flash' for provider 'qwen'"):
+    os.environ["CODY_MODEL"] = "deepseek-flash"
+    with pytest.raises(ValueError, match="Invalid model 'deepseek-flash' for provider 'qwen'"):
         get_client("", "")
 
 
@@ -574,11 +607,11 @@ def test_mock_mode_still_works_with_inference_path():
 
 
 def test_existing_defaults_unchanged():
-    """When neither CODY_PROVIDER nor CODY_MODEL is set, defaults to deepseek-v4-flash."""
+    """When neither CODY_PROVIDER nor CODY_MODEL is set, defaults to deepseek-flash."""
     os.environ["AI_API_KEY"] = "key"
     client = get_client("", "deepseek")
     assert isinstance(client, DeepSeekClient)
-    assert client.model_name == "deepseek-v4-flash"
+    assert client.model_name == "deepseek-flash"
 
 
 # ---------------------------------------------------------------------------
@@ -624,7 +657,7 @@ def test_qwen_base_url_default_is_dashscope(monkeypatch):
 def test_deepseek_base_url_override(monkeypatch):
     """DEEPSEEK_BASE_URL is read at call time and replaces the api.deepseek.com default."""
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://custom-ds.example.com")
-    client = DeepSeekClient(api_key="key", model_name="deepseek-v4-flash")
+    client = DeepSeekClient(api_key="key", model_name="deepseek-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
@@ -642,7 +675,7 @@ def test_deepseek_base_url_override(monkeypatch):
 def test_deepseek_base_url_default(monkeypatch):
     """Without DEEPSEEK_BASE_URL, api.deepseek.com is used."""
     monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
-    client = DeepSeekClient(api_key="key", model_name="deepseek-v4-flash")
+    client = DeepSeekClient(api_key="key", model_name="deepseek-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {

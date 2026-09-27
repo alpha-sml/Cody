@@ -20,6 +20,7 @@ _SENSITIVE_SUBSTRINGS = (
     "CREDENTIAL",
     "AUTH_TOKEN",
     "BEARER",
+    "MOCK_MODEL",
 )
 
 _SENSITIVE_PREFIXES = (
@@ -29,6 +30,7 @@ _SENSITIVE_PREFIXES = (
     "AWS_",
     "GCP_",
     "AZURE_",
+    "CODY_",
 )
 
 

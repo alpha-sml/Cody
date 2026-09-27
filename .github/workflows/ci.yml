@@ -46,4 +46,4 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           REAL_API_TEST: "1"
         run: |
-          make test -k "real_provider"
+          make test TEST_ARGS="-k real_provider"

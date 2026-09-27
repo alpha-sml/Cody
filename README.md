@@ -5,7 +5,7 @@
 <div align="center">
 
 [![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](requirements.txt)
-[![Tests](https://img.shields.io/badge/tests-230%2B%20passing-success?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-240%2B%20passing-success?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![CI Status](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![Evaluation Providers](https://img.shields.io/badge/eval%20providers-DeepSeek%20%7C%20Qwen-6366F1?style=flat-square)](config/config.yaml)
 [![Credential Isolation](https://img.shields.io/badge/credentials-subprocess%20isolated-8B5CF6?style=flat-square)](src/harness/tools/env.py)
@@ -118,7 +118,12 @@ flowchart TD
 
 ## 5. Model Providers & Configuration Precedence
 
-Cody natively supports **DeepSeek** and **Qwen** model families for live evaluation. Unsupported providers (such as OpenAI, Anthropic, Gemini, or Llama) are rejected immediately at startup. In addition, an evaluator or committee-prescribed model can be enforced via `CODY_LOCKED_MODEL`, rejecting any attempted conflicting overrides.
+Cody natively supports **DeepSeek** and **Qwen** model families for live evaluation. Unsupported providers (such as OpenAI, Anthropic, Gemini, or Llama) are rejected immediately at startup.
+
+> **Important Evaluation Note:**
+> Live evaluation requires an external model API. The evaluator supplies credentials at runtime through the environment (`AI_API_KEY`). The repository contains zero hard-coded credentials, and credentials are never stored on disk, logged, or exposed to subprocesses.
+>
+> **Mock Mode (`MOCK_MODEL=true` or `provider: mock`) is strictly for offline development and reproducible CI testing—it is not the final evaluation mode.**
 
 All evaluation paths use **text-only** OpenAI-compatible chat completion interfaces (`/chat/completions`). No multimodal or vision dependencies exist.
 
@@ -126,7 +131,7 @@ All evaluation paths use **text-only** OpenAI-compatible chat completion interfa
 
 | Provider | Default Model | Default Endpoint | Endpoint Override | Evaluation Status |
 |:---|:---|:---|:---|:---|
-| **DeepSeek** | `deepseek-v4-flash` | `https://api.deepseek.com` | `DEEPSEEK_BASE_URL` | **Supported Evaluation Provider** |
+| **DeepSeek** | `deepseek-flash` | `https://api.deepseek.com` | `DEEPSEEK_BASE_URL` | **Supported Evaluation Provider** (Default) |
 | **Qwen** | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `QWEN_BASE_URL` | **Supported Evaluation Provider** |
 | **Mock** | In-Memory Mock | Local Execution | — | **Offline Test Provider** (Not for evaluation) |
 
@@ -135,36 +140,49 @@ All evaluation paths use **text-only** OpenAI-compatible chat completion interfa
 Provider and model settings follow strict deterministic precedence:
 1. **CLI Arguments**: `--provider <name>`, `--model <name>` (Highest precedence)
 2. **Environment Variables**: `CODY_PROVIDER`, `CODY_MODEL` (and locked model `CODY_LOCKED_MODEL`)
-3. **Provider Inference**: When `CODY_PROVIDER` is absent, the provider is inferred from the `CODY_MODEL` prefix (`deepseek-*` → deepseek, `qwen-*` → qwen).
+3. **Locked Model / Provider Inference**: When `CODY_PROVIDER` is absent, the provider is inferred from the model name prefix (`deepseek-*` → deepseek, `qwen-*` → qwen).
 4. **Configuration File**: `config/config.yaml` (`model.provider`, `model.name`) (Base default)
 
-When a provider is overridden without explicitly specifying a model, that provider's default model is used (`deepseek-v4-flash` for DeepSeek, `qwen-plus` for Qwen). Incompatible model/provider combinations are rejected immediately without silent substitution.
+When a provider is overridden without explicitly specifying a model, that provider's default model is used (`deepseek-flash` for DeepSeek, `qwen-plus` for Qwen). Incompatible model/provider combinations are rejected immediately without silent substitution.
+
+### Evaluator Model Overrides & Locked Model Enforcement
+
+- **Arbitrary Evaluator Model Override**: If the evaluation committee supplies a specific model (e.g. `CODY_MODEL="deepseek-chat"` or `CODY_MODEL="qwen-turbo"` or `--model <name>`), Cody accepts any legitimate member of the provider's model family without requiring source code modifications.
+- **`CODY_LOCKED_MODEL` Enforcement**: When set, Cody locks execution to the prescribed model:
+  - Rejects conflicting model overrides from CLI arguments or `CODY_MODEL`.
+  - Automatically infers the correct provider (`deepseek` or `qwen`) if `CODY_PROVIDER` is not explicitly set.
+  - Never silently substitutes an incompatible model.
 
 ### Credential Resolution Precedence
 
-1. **`AI_API_KEY`**: Primary evaluator standard credential (highest precedence).
-2. **`<PROVIDER>_API_KEY`**: Fallback provider-specific key (`DEEPSEEK_API_KEY` or `QWEN_API_KEY`).
+1. **`AI_API_KEY`**: Primary evaluator standard credential (highest precedence). Read at runtime in Python memory; never written to disk or logged.
+2. **`<PROVIDER>_API_KEY`**: Fallback provider-specific local development key (`DEEPSEEK_API_KEY` or `QWEN_API_KEY`).
+3. **Endpoint Overrides**: `DEEPSEEK_BASE_URL` and `QWEN_BASE_URL` allow routing API calls through evaluator proxies or alternate gateways.
 
 ### Runtime Provider & Model Selection Examples
 
-**Via Environment Variables (Recommended for Evaluators):**
+**Via Environment Variables (Standard Evaluator Mechanism):**
 ```bash
-# Evaluate with DeepSeek (default):
+# Evaluate with DeepSeek (canonical default: deepseek-flash):
 export AI_API_KEY="<EVALUATOR_KEY>"
 make run
 
-# Evaluate with Qwen:
+# Evaluate with Qwen (default: qwen-plus):
 export AI_API_KEY="<EVALUATOR_KEY>"
 export CODY_PROVIDER="qwen"
+make run
+
+# Evaluate with a specific Qwen model (infers CODY_PROVIDER=qwen automatically):
+export AI_API_KEY="<EVALUATOR_KEY>"
 export CODY_MODEL="qwen-plus"
 make run
 
-# Let provider be inferred from model name (no CODY_PROVIDER needed):
+# Lock evaluation model (rejects conflicting overrides):
 export AI_API_KEY="<EVALUATOR_KEY>"
-export CODY_MODEL="qwen-plus"   # infers CODY_PROVIDER=qwen automatically
+export CODY_LOCKED_MODEL="deepseek-flash"
 make run
 
-# Override the Qwen endpoint (e.g. evaluator proxy):
+# Override base URL (e.g. evaluator proxy gateway):
 export QWEN_BASE_URL="https://proxy.example.com/qwen/v1"
 make run
 ```
@@ -176,12 +194,12 @@ make run ARGS="--provider qwen --model qwen-plus"
 
 Attempting to select an unsupported provider (e.g. `CODY_PROVIDER=openai`) fails immediately with a descriptive error:
 ```
-Error: Unknown provider: 'openai'. Evaluation is restricted to approved providers: deepseek, qwen.
+Error: Unknown provider: 'openai'. Supported evaluation providers are: deepseek, qwen.
 ```
 
 ---
 
-## 6. Credential Handling
+## 6. Credential Handling & Security Isolation
 
 Cody is designed with strict credential isolation boundaries to protect evaluator secrets:
 
@@ -190,11 +208,11 @@ Cody is designed with strict credential isolation boundaries to protect evaluato
 export AI_API_KEY="<EVALUATOR_API_KEY>"
 ```
 
-- **Single Primary Key**: The evaluator provides credentials through `AI_API_KEY`. Cody reads this directly in Python for model API calls.
+- **Single Primary Key**: The evaluator provides credentials through `AI_API_KEY`. Cody reads this directly in Python runtime memory for model API calls.
+- **Zero Disk & Log Exposure**: Credentials are never written to repository files, configuration files, commit history, or stdout/stderr logs.
 - **Subprocess Environment Sanitization**: Every subprocess executed by Cody (`shell`, `file_search`, `repo_tree`, `apply_patch`, `git`, `test_runner`, `verifier`) passes through `sanitized_env()`.
-- **Comprehensive Credential Stripping**: Evaluator keys (`AI_API_KEY`, `DEEPSEEK_API_KEY`, `QWEN_API_KEY`), third-party tokens (`GITHUB_TOKEN`, `OPENAI_API_KEY`, bearer tokens, cloud secrets, passwords, private keys), and IDE metadata prefixes (`ANTIGRAVITY_*`) are stripped before any child process is spawned. Target code cannot read evaluator secrets.
-- **Zero Disk Exposure**: API keys are never written to configuration files, repository files, or logs.
-- **Repository Cleanliness**: `.env` is gitignored and tracked repository files contain no hard-coded secrets.
+- **Comprehensive Credential Stripping**: Evaluator keys (`AI_API_KEY`, `DEEPSEEK_API_KEY`, `QWEN_API_KEY`), third-party tokens (`GITHUB_TOKEN`, `OPENAI_API_KEY`, bearer tokens, cloud secrets, passwords, private keys), and IDE metadata prefixes (`ANTIGRAVITY_*`) are stripped before any child process is spawned. Target repository code cannot read evaluator secrets.
+- **Repository Cleanliness**: `.env` is gitignored and tracked repository files contain zero hard-coded secrets.
 
 ---
 
@@ -202,13 +220,12 @@ export AI_API_KEY="<EVALUATOR_API_KEY>"
 
 ### Standard Evaluator Workflow
 
-Zero configuration or code modification is required. Clone, provide API key, set up, and run:
+Zero source code configuration is required. Set API key in environment, install dependencies, and run:
 
 ```bash
-git clone https://github.com/alpha-sml/Cody.git
-cd Cody
-export AI_API_KEY="<PROVIDED_API_KEY>"
+export AI_API_KEY="your-api-key"
 make setup
+make run
 ```
 
 #### Run with task via **stdin** (Standard Evaluator Mechanism):
@@ -227,9 +244,33 @@ make run
 make run ARGS="--task 'Fix the authentication flow in login.py'"
 ```
 
+#### Provider-Specific Execution:
+```bash
+# Evaluate with DeepSeek:
+AI_API_KEY="$AI_API_KEY" CODY_PROVIDER=deepseek make run
+
+# Evaluate with Qwen:
+AI_API_KEY="$AI_API_KEY" CODY_PROVIDER=qwen make run
+```
+
 #### Run against an external repository:
 ```bash
 make run ARGS="--task 'Resolve database leak' --repo /path/to/target/repo"
+```
+
+### Real API Smoke Test (Optional Live Verification)
+
+To verify live provider connectivity without committing keys:
+
+```bash
+# 1. Smoke test DeepSeek live API:
+AI_API_KEY="$AI_API_KEY" CODY_PROVIDER=deepseek make run ARGS="--task 'Verify system status'"
+
+# 2. Smoke test Qwen live API:
+AI_API_KEY="$AI_API_KEY" CODY_PROVIDER=qwen make run ARGS="--task 'Verify system status'"
+
+# 3. Automated smoke test (opt-in; skips cleanly when credentials absent):
+REAL_API_TEST=1 AI_API_KEY="$AI_API_KEY" make test TEST_ARGS="-k real_provider"
 ```
 
 ### Offline Mock Workflow (Testing & CI)
@@ -239,6 +280,18 @@ Run the full autonomous lifecycle offline without external network calls or toke
 ```bash
 echo "Fix the authentication flow" | AI_API_KEY="test-key" MOCK_MODEL=true make run
 ```
+
+### Standard Makefile Interface
+
+The repository provides standard high-level targets:
+
+```bash
+make setup  # Creates Python venv and installs dependencies
+make run    # Launches Cody AI harness (supports ARGS="..." or stdin)
+make test   # Executes the offline test suite (supports TEST_ARGS="...")
+make clean  # Cleans venv, cache files, and build artifacts
+```
+
 
 ---
 
@@ -332,7 +385,7 @@ Upon task completion or termination, Cody prints a structured JSON evaluation su
     ]
   },
   "model_provider": "deepseek",
-  "model_name": "deepseek-v4-flash",
+  "model_name": "deepseek-flash",
   "model_call_count": 3,
   "model_calls": {
     "planner": 1,
@@ -355,11 +408,12 @@ Upon task completion or termination, Cody prints a structured JSON evaluation su
 
 ## 10. Test Suite
 
-Execute the comprehensive automated test suite (215+ unit, integration, and adversarial tests):
+Execute the comprehensive automated test suite (245+ offline unit, integration, and adversarial tests):
 
 ```bash
 make test
 ```
+
 
 ```
 tests/
@@ -377,7 +431,7 @@ tests/
 ├── test_integration.py              # Full autonomous lifecycle integration tests
 ├── test_integration2.py             # Classifier end-to-end integration tests
 ├── test_main.py                     # CLI flags, stdin, and env var parsing tests
-├── test_member2.py                  # Tool schemas, patch applying, and model errors
+├── test_boundary_tools.py          # Tool schemas, patch applying, and model errors
 ├── test_orchestrator.py             # Orchestrator state transitions & gates
 ├── test_recovery_targeted.py        # Failure classification & anti-loop tests
 ├── test_state.py                    # State initialization tests

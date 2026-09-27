@@ -1,8 +1,10 @@
 import pytest
 import os
+from typing import List, Dict, Any, Optional, cast
 import requests
 from unittest.mock import patch
-from src.harness.model.boundary import extract_json
+from src.harness.model.base import BaseModelClient
+from src.harness.model.boundary import extract_json, validate_action
 from src.harness.model.providers.mock import MockClient
 from src.harness.model.providers.deepseek import DeepSeekClient
 from src.harness.tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool, safe_path
@@ -11,6 +13,9 @@ from src.harness.tools.git import GitStatusTool, GitDiffTool
 from src.harness.verification.test_runner import TestRunner
 from src.harness.verification.verifier import Verifier
 from src.harness.tools.registry import ToolRegistry
+from src.harness.planner import Planner
+from src.harness.state import State
+from src.harness.recovery.recovery import RecoveryManager
 
 def test_extract_json_fences():
     # standard
@@ -31,7 +36,7 @@ def test_extract_json_fences():
     assert res4["error_type"] == "invalid_model_response"
 
 def test_api_failure_behavior():
-    client = DeepSeekClient("fake_key", "deepseek-v4-flash")
+    client = DeepSeekClient("fake_key", "deepseek-flash")
 
     # 1. Timeout
     with patch("requests.post", side_effect=requests.Timeout):
@@ -143,7 +148,7 @@ def test_verifier_structure(tmp_path):
     assert "changed_files" in res
     assert res["tests_passed"] is True
 
-def test_member2_integration(tmp_path):
+def test_tool_execution_integration(tmp_path):
     repo = str(tmp_path)
 
     # 1. Setup tool registry
@@ -154,7 +159,7 @@ def test_member2_integration(tmp_path):
 
     # 2. Mock model that will return a patch tool call
     class IntegrationModel(MockClient):
-        def generate(self, prompt, system_prompt=None, tools=None):
+        def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
             return {
                 "action": "tool_call",
                 "tool": "apply_patch",
@@ -175,6 +180,7 @@ def test_member2_integration(tmp_path):
     assert action["action"] == "tool_call"
 
     tool = registry.get_tool(action["tool"])
+    assert tool is not None
     res = tool.execute(**action["arguments"])
     assert res["status"] == "success"
 
@@ -189,17 +195,14 @@ def test_member2_integration(tmp_path):
     assert v_res["verified"] is True
     assert v_res["tests_passed"] is True
 
-from src.harness.planner import Planner
-from src.harness.state import State
-from src.harness.recovery.recovery import RecoveryManager
-
 def test_planner_validation():
-    class BadPlannerModel(MockClient):
-        def __init__(self, action, result=None):
+    class BadPlannerModel(BaseModelClient):
+        def __init__(self, action: str, result: Optional[str] = None):
             self.action = action
             self.result = result
-        def generate(self, prompt, **kwargs):
-            if self.action == "string": return "just a string"
+
+        def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+            if self.action == "string": return cast(Dict[str, Any], "just a string")
             if self.action == "empty": return {"action": "finish", "result": ""}
             if self.action == "error": return {"action": "error", "message": "boom"}
             if self.action == "bad_action": return {"action": "tool_call"}
@@ -232,8 +235,6 @@ def test_planner_validation():
     plan = planner.update_plan(state)
     assert plan == ["1. Do this", "2. Do that"]
 
-from src.harness.model.boundary import validate_action
-
 def test_model_validation():
     # finish missing result
     res = validate_action({"action": "finish"})
@@ -252,15 +253,15 @@ def test_model_validation():
     assert res["action"] == "error"
 
 def test_recovery_validation_extended():
-    class CapturingModel(MockClient):
-        def __init__(self, return_val):
+    class CapturingModel(BaseModelClient):
+        def __init__(self, return_val: Dict[str, Any]):
             self.return_val = return_val
-            self.last_prompt = None
-            self.last_tools = None
+            self.last_prompt: Optional[str] = None
+            self.last_tools: Optional[List[Dict[str, Any]]] = None
 
-        def generate(self, prompt, **kwargs):
+        def generate(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
             self.last_prompt = prompt
-            self.last_tools = kwargs.get("tools")
+            self.last_tools = tools
             return self.return_val
 
     # 1. capture arguments
@@ -274,6 +275,7 @@ def test_recovery_validation_extended():
 
     recovery.recover(state, failure_details, tools=tools)
 
+    assert model.last_prompt is not None
     assert "The Task" in model.last_prompt
     assert "['1', '2']" in model.last_prompt
     assert "foo" in model.last_prompt

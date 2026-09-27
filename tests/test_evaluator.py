@@ -231,7 +231,7 @@ class TestEvaluatorSmoke:
                 eval_json = json.loads(line.replace("Evaluation: ", ""))
                 assert "task" in eval_json
                 assert eval_json["model_provider"] == "deepseek"
-                assert eval_json["model_name"] == "deepseek-v4-flash"
+                assert eval_json["model_name"] == "deepseek-flash"
                 assert "final_status" in eval_json
                 assert "model_call_count" in eval_json
                 break

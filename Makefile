@@ -8,7 +8,7 @@ run:
 	PYTHONPATH=. ./venv/bin/python -m src.harness.main $(ARGS)
 
 test:
-	PYTHONPATH=. ./venv/bin/pytest tests/ -v
+	PYTHONPATH=. ./venv/bin/pytest tests/ -v $(TEST_ARGS)
 
 clean:
 	rm -rf venv/

@@ -5,7 +5,7 @@ import select
 import sys
 from .config import load_config
 from .state import State, TaskSpec
-from .model.client import get_client
+from .model.client import get_client, _infer_provider_from_model
 from .tools.registry import ToolRegistry
 from .tools.file_tools import FileReadTool, FileWriteTool, FileSearchTool, RepoTreeTool, ApplyPatchTool
 from .tools.shell import ShellTool
@@ -87,15 +87,26 @@ def main():
 
     config = load_config()
 
-    # Precedence: CLI option > Environment variable > Config file
+    locked_model = os.environ.get("CODY_LOCKED_MODEL", "").strip()
+
+    # Precedence: CLI option > Environment variable > Locked model > Model inference > Config file
     if args.provider:
         provider = args.provider.lower().strip()
     elif os.environ.get("CODY_PROVIDER", "").strip():
         provider = os.environ["CODY_PROVIDER"].lower().strip()
+    elif locked_model and _infer_provider_from_model(locked_model):
+        provider = _infer_provider_from_model(locked_model)
+    elif os.environ.get("CODY_MODEL", "").strip() and _infer_provider_from_model(os.environ["CODY_MODEL"].strip()):
+        provider = _infer_provider_from_model(os.environ["CODY_MODEL"].strip())
     else:
         provider = config.model.provider.lower().strip()
 
-    if args.model:
+    if locked_model:
+        if args.model and args.model.strip() != locked_model:
+            print(f"Error: Attempted arbitrary model override '{args.model}' rejected: evaluation model is locked to '{locked_model}'.")
+            sys.exit(1)
+        model_name = locked_model
+    elif args.model:
         model_name = args.model.strip()
     elif os.environ.get("CODY_MODEL", "").strip():
         model_name = os.environ["CODY_MODEL"].strip()
@@ -155,7 +166,7 @@ def main():
         repo_path=args.repo,
         evaluation_report={
             "model_provider": provider,
-            "model_name": model_name,
+            "model_name": getattr(model_client, "model_name", None) or model_name,
         },
     )
 
