@@ -124,18 +124,19 @@ All evaluation paths use **text-only** OpenAI-compatible chat completion interfa
 
 ### Provider Matrix
 
-| Provider | Default Model | Endpoint | Evaluation Status |
-|:---|:---|:---|:---|
-| **DeepSeek** | `deepseek-v4-flash` | `https://api.deepseek.com/chat/completions` | **Supported Evaluation Provider** |
-| **Qwen** | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | **Supported Evaluation Provider** |
-| **Mock** | In-Memory Mock | Local Execution | **Offline Test Provider** (Not for evaluation) |
+| Provider | Default Model | Default Endpoint | Endpoint Override | Evaluation Status |
+|:---|:---|:---|:---|:---|
+| **DeepSeek** | `deepseek-v4-flash` | `https://api.deepseek.com` | `DEEPSEEK_BASE_URL` | **Supported Evaluation Provider** |
+| **Qwen** | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `QWEN_BASE_URL` | **Supported Evaluation Provider** |
+| **Mock** | In-Memory Mock | Local Execution | — | **Offline Test Provider** (Not for evaluation) |
 
 ### Configuration Precedence Order
 
 Provider and model settings follow strict deterministic precedence:
 1. **CLI Arguments**: `--provider <name>`, `--model <name>` (Highest precedence)
 2. **Environment Variables**: `CODY_PROVIDER`, `CODY_MODEL` (and locked model `CODY_LOCKED_MODEL`)
-3. **Configuration File**: `config/config.yaml` (`model.provider`, `model.name`) (Base default)
+3. **Provider Inference**: When `CODY_PROVIDER` is absent, the provider is inferred from the `CODY_MODEL` prefix (`deepseek-*` → deepseek, `qwen-*` → qwen).
+4. **Configuration File**: `config/config.yaml` (`model.provider`, `model.name`) (Base default)
 
 When a provider is overridden without explicitly specifying a model, that provider's default model is used (`deepseek-v4-flash` for DeepSeek, `qwen-plus` for Qwen). Incompatible model/provider combinations are rejected immediately without silent substitution.
 
@@ -156,6 +157,15 @@ make run
 export AI_API_KEY="<EVALUATOR_KEY>"
 export CODY_PROVIDER="qwen"
 export CODY_MODEL="qwen-plus"
+make run
+
+# Let provider be inferred from model name (no CODY_PROVIDER needed):
+export AI_API_KEY="<EVALUATOR_KEY>"
+export CODY_MODEL="qwen-plus"   # infers CODY_PROVIDER=qwen automatically
+make run
+
+# Override the Qwen endpoint (e.g. evaluator proxy):
+export QWEN_BASE_URL="https://proxy.example.com/qwen/v1"
 make run
 ```
 

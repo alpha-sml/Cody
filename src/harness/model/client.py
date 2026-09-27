@@ -46,6 +46,21 @@ DEFAULT_PROVIDER_MODELS = {
     "qwen": "qwen-plus",
 }
 
+# Ordered prefix -> provider mapping used for model-name inference.
+_MODEL_PREFIX_MAP = [
+    ("deepseek", "deepseek"),
+    ("qwen", "qwen"),
+]
+
+
+def _infer_provider_from_model(model_name: str) -> str:
+    """Return provider inferred from model name prefix, or '' if unknown."""
+    m = model_name.lower().strip()
+    for prefix, provider in _MODEL_PREFIX_MAP:
+        if m.startswith(prefix):
+            return provider
+    return ""
+
 
 def validate_model_for_provider(model_name: str, provider: str) -> None:
     """Validate that model_name belongs to the specified provider's model family.
@@ -68,13 +83,42 @@ def validate_model_for_provider(model_name: str, provider: str) -> None:
 
 
 def get_client(model_name: str = "", provider: str = "deepseek") -> BaseModelClient:
-    # Allow env-var overrides for evaluator flexibility
-    provider = os.environ.get("CODY_PROVIDER", provider).lower().strip()
+    """Resolve provider/model and return the appropriate client.
+
+    Resolution order:
+      1. CODY_PROVIDER env var (explicit – highest precedence)
+      2. ``provider`` argument (from CLI or config)
+      3. Inferred from CODY_MODEL / model_name prefix when CODY_PROVIDER is absent
+      4. Default provider argument value ('deepseek')
+    """
+    explicit_provider_env = os.environ.get("CODY_PROVIDER", "").strip()
     env_model = os.environ.get("CODY_MODEL", "").strip()
+
+    # Track whether the model was supplied via env var (inference is relevant only then)
+    model_from_env = bool(env_model)
+
     if env_model:
         model_name = env_model
     else:
         model_name = model_name.strip()
+
+    # Determine effective provider
+    if explicit_provider_env:
+        # Explicit CODY_PROVIDER env var wins unconditionally
+        provider = explicit_provider_env.lower().strip()
+    else:
+        # Normalise the argument-level provider (config/CLI default)
+        provider = provider.lower().strip()
+        # When CODY_PROVIDER is absent AND the model came from the CODY_MODEL env var,
+        # infer the provider from the model name prefix.  This lets users configure
+        # Cody with only CODY_MODEL=qwen-plus (no CODY_PROVIDER needed).
+        # We do NOT infer when the model was passed as a direct function argument
+        # so that explicit get_client("deepseek-v4-flash", "qwen") still raises a
+        # clear validate_model_for_provider error rather than silently switching.
+        if model_from_env:
+            inferred = _infer_provider_from_model(model_name)
+            if inferred:
+                provider = inferred
 
     # Reject unsupported providers early so mock mode cannot mask invalid configurations
     if provider != "mock" and provider not in SUPPORTED_PROVIDERS:
