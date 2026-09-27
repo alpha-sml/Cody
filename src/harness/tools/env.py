@@ -8,17 +8,27 @@ target code.
 import os
 from typing import Dict
 
-# Keys that must be stripped from subprocess environments used to run
-# target-repository commands.  Cody's own model-API calls read these
-# directly from ``os.environ`` — they are NOT affected.
-_SENSITIVE_KEYS = frozenset([
-    "AI_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "QWEN_API_KEY",
-])
+# Substrings and prefixes that identify sensitive runtime credentials,
+# tokens, cloud secrets, or IDE metadata.
+_SENSITIVE_SUBSTRINGS = (
+    "API_KEY",
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "PASSWD",
+    "PRIVATE_KEY",
+    "CREDENTIAL",
+    "AUTH_TOKEN",
+    "BEARER",
+)
 
 _SENSITIVE_PREFIXES = (
     "ANTIGRAVITY_",
+    "GITHUB_",
+    "GH_",
+    "AWS_",
+    "GCP_",
+    "AZURE_",
 )
 
 
@@ -27,6 +37,9 @@ def sanitized_env() -> Dict[str, str]:
     env = os.environ.copy()
     for key in list(env.keys()):
         k_upper = key.upper()
-        if k_upper in _SENSITIVE_KEYS or any(k_upper.startswith(p) for p in _SENSITIVE_PREFIXES):
+        if (
+            any(sub in k_upper for sub in _SENSITIVE_SUBSTRINGS)
+            or any(k_upper.startswith(p) for p in _SENSITIVE_PREFIXES)
+        ):
             env.pop(key, None)
     return env

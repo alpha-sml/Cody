@@ -339,38 +339,67 @@ def test_deepseek_default_model():
     assert client.model_name == "deepseek-v4-flash"
 
 
-def test_qwen_default_model_fallback():
+def test_qwen_default_model():
     """When switching to qwen without specifying model, default to qwen-plus."""
     os.environ["AI_API_KEY"] = "eval-key"
-    qw = get_client("deepseek-v4-flash", "qwen")
-    assert isinstance(qw, QwenClient)
-    assert qw.model_name == "qwen-plus"
-
     qw_empty = get_client("", "qwen")
     assert isinstance(qw_empty, QwenClient)
     assert qw_empty.model_name == "qwen-plus"
 
 
+def test_unsupported_model_provider_combination_rejected():
+    """Evaluation mode rejects mismatched model/provider combinations and never silently substitutes."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    with pytest.raises(ValueError, match="Invalid model 'deepseek-v4-flash' for provider 'qwen'"):
+        get_client("deepseek-v4-flash", "qwen")
+
+    with pytest.raises(ValueError, match="Invalid model 'qwen-plus' for provider 'deepseek'"):
+        get_client("qwen-plus", "deepseek")
+
+
+def test_locked_evaluation_model_rejects_arbitrary_override(monkeypatch):
+    """Prescribed / locked evaluation model cannot be overridden by arbitrary model."""
+    monkeypatch.setenv("AI_API_KEY", "eval-key")
+    monkeypatch.setenv("CODY_LOCKED_MODEL", "deepseek-v4-flash")
+    # Matching model is accepted
+    client = get_client("deepseek-v4-flash", "deepseek")
+    assert client.model_name == "deepseek-v4-flash"
+
+    # Conflicting arbitrary model is rejected
+    with pytest.raises(ValueError, match="evaluation model is locked"):
+        get_client("deepseek-custom-model", "deepseek")
+
+
 def test_cody_provider_env_switches_default():
-    """CODY_PROVIDER=qwen switches provider and defaults model to qwen-plus."""
+    """CODY_PROVIDER=qwen switches provider and defaults model to qwen-plus when model is omitted."""
     os.environ["AI_API_KEY"] = "eval-key"
     os.environ["CODY_PROVIDER"] = "qwen"
-    client = get_client("deepseek-v4-flash", "deepseek")
+    client = get_client("", "deepseek")
     assert isinstance(client, QwenClient)
     assert client.model_name == "qwen-plus"
 
 
 def test_cody_model_env_overrides_default():
-    """CODY_MODEL explicitly overrides default for both providers."""
+    """CODY_MODEL explicitly overrides default for both providers with valid family models."""
     os.environ["AI_API_KEY"] = "eval-key"
-    os.environ["CODY_MODEL"] = "deepseek-custom-v4"
-    client = get_client("deepseek-v4-flash", "deepseek")
-    assert client.model_name == "deepseek-custom-v4"
+    os.environ["CODY_MODEL"] = "deepseek-coder"
+    client = get_client("", "deepseek")
+    assert client.model_name == "deepseek-coder"
 
     os.environ["CODY_PROVIDER"] = "qwen"
-    os.environ["CODY_MODEL"] = "qwen-turbo-custom"
-    client2 = get_client("deepseek-v4-flash", "deepseek")
-    assert client2.model_name == "qwen-turbo-custom"
+    os.environ["CODY_MODEL"] = "qwen-turbo"
+    client2 = get_client("", "deepseek")
+    assert client2.model_name == "qwen-turbo"
+
+
+def test_missing_required_api_key_configuration(monkeypatch):
+    """Missing required API credentials raises clear ValueError."""
+    monkeypatch.delenv("AI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+    monkeypatch.setenv("MOCK_MODEL", "false")
+    with pytest.raises(ValueError, match="No API key found"):
+        get_client("deepseek-v4-flash", "deepseek")
 
 
 @pytest.mark.parametrize("bad_provider", ["openai", "anthropic", "gemini", "llama"])

@@ -218,6 +218,7 @@ class TestEvaluatorSmoke:
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_path), capture_output=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_path), capture_output=True)
         (tmp_path / "README.md").write_text("test")
+        (tmp_path / "Makefile").write_text("test:\n\t@true\n")
         subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True)
 

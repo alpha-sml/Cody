@@ -47,29 +47,62 @@ DEFAULT_PROVIDER_MODELS = {
 }
 
 
-def get_client(model_name: str, provider: str = "deepseek") -> BaseModelClient:
+def validate_model_for_provider(model_name: str, provider: str) -> None:
+    """Validate that model_name belongs to the specified provider's model family.
+
+    Never silently substitute an arbitrary model for an invalid combination.
+    """
+    m_lower = model_name.lower().strip()
+    if provider == "deepseek":
+        if not m_lower.startswith("deepseek"):
+            raise ValueError(
+                f"Invalid model '{model_name}' for provider 'deepseek'. "
+                f"Expected a deepseek model family member (e.g. deepseek-v4-flash, deepseek-chat)."
+            )
+    elif provider == "qwen":
+        if not m_lower.startswith("qwen"):
+            raise ValueError(
+                f"Invalid model '{model_name}' for provider 'qwen'. "
+                f"Expected a qwen model family member (e.g. qwen-plus, qwen-max, qwen-turbo)."
+            )
+
+
+def get_client(model_name: str = "", provider: str = "deepseek") -> BaseModelClient:
     # Allow env-var overrides for evaluator flexibility
     provider = os.environ.get("CODY_PROVIDER", provider).lower().strip()
-    model_name = os.environ.get("CODY_MODEL", model_name).strip()
+    env_model = os.environ.get("CODY_MODEL", "").strip()
+    if env_model:
+        model_name = env_model
+    else:
+        model_name = model_name.strip()
 
     # Reject unsupported providers early so mock mode cannot mask invalid configurations
     if provider != "mock" and provider not in SUPPORTED_PROVIDERS:
         raise ValueError(
-            f"Unknown provider: '{provider}'. Evaluation is restricted to approved providers: "
+            f"Unknown provider: '{provider}'. Supported evaluation providers are: "
             f"{', '.join(sorted(SUPPORTED_PROVIDERS))}."
         )
+
+    # Locked evaluation mode enforcement
+    locked_model = os.environ.get("CODY_LOCKED_MODEL", "").strip()
+    if locked_model:
+        if model_name and model_name != locked_model:
+            raise ValueError(
+                f"Attempted arbitrary model override '{model_name}' rejected: "
+                f"evaluation model is locked to '{locked_model}'."
+            )
+        model_name = locked_model
 
     is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true" or provider == "mock"
     if is_mock:
         return MockClient()
 
-    # Automatically use provider default if model name was not explicitly overridden
-    if provider == "qwen" and (not model_name or model_name in (DEFAULT_PROVIDER_MODELS["deepseek"], "deepseek-chat")):
-        model_name = DEFAULT_PROVIDER_MODELS["qwen"]
-    elif not model_name and provider in DEFAULT_PROVIDER_MODELS:
+    # If model is omitted or empty, use provider default
+    if not model_name and provider in DEFAULT_PROVIDER_MODELS:
         model_name = DEFAULT_PROVIDER_MODELS[provider]
 
     model_name = validate_model_name(model_name)
+    validate_model_for_provider(model_name, provider)
     api_key = _resolve_api_key(provider)
 
     if provider == "deepseek":

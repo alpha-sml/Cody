@@ -161,3 +161,25 @@ def test_sanitized_env_case_insensitivity(monkeypatch):
     assert "ai_api_key" not in env
     assert "Ai_Api_Key" not in env
     assert "antigravity_metadata" not in env
+
+
+def test_sanitized_env_strips_credential_variants(monkeypatch):
+    """sanitized_env strips API keys, bearer tokens, cloud secrets, passwords, and private keys."""
+    variants = {
+        "OPENAI_API_KEY": "sk-12345",
+        "GITHUB_TOKEN": "ghp_abcde",
+        "GH_TOKEN": "gho_xyz",
+        "AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "AWS_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
+        "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/credentials.json",
+        "SSH_PRIVATE_KEY": "-----BEGIN RSA PRIVATE KEY-----",
+        "DATABASE_PASSWORD": "supersecretpassword",
+        "AUTH_BEARER_TOKEN": "bearer-token-val",
+    }
+    for k, v in variants.items():
+        monkeypatch.setenv(k, v)
+
+    clean_env = sanitized_env()
+    for k in variants:
+        assert k not in clean_env, f"Credential variant {k} leaked into sanitized_env"
+

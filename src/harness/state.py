@@ -12,6 +12,7 @@ class TaskSpec(BaseModel):
     expected_behavior: List[str] = Field(default_factory=list)
     verification_hints: List[str] = Field(default_factory=list)
     source: str = "cli"  # cli | stdin | env
+    allow_broad_changes: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -106,6 +107,17 @@ class TaskSpec(BaseModel):
             if sym not in ("def", "class", "fn", "function", "if", "for", "while", "return", "pass", "import") and sym not in extracted_symbols:
                 extracted_symbols.append(sym)
 
+        broad_patterns = [
+            r"broad changes\s*:\s*(?:true|yes|allowed)",
+            r"allow(?:s)? broad changes",
+            r"permit(?:s)? broad changes",
+            r"broad changes (?:are )?permitted",
+            r"any files? (?:can|may) be modified",
+            r"all files? (?:can|may) be modified",
+            r"full repository refactor",
+        ]
+        allow_broad = any(re.search(pat, clean_text, re.IGNORECASE) for pat in broad_patterns)
+
         return cls(
             title=title,
             description=clean_text,
@@ -116,6 +128,7 @@ class TaskSpec(BaseModel):
             expected_behavior=parsed_sections["expected_behavior"],
             verification_hints=parsed_sections["verification_hints"],
             source=source,
+            allow_broad_changes=allow_broad,
         )
 
 class State(BaseModel):

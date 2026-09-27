@@ -104,3 +104,31 @@ def test_discovery_fallback(tmp_path):
     assert disc["command"] == "make test"
     assert disc["source"] == "fallback"
     assert disc["confidence"] == "low"
+
+
+def test_discovery_maven_wrapper_preferred(tmp_path):
+    (tmp_path / "pom.xml").write_text("<project></project>\n")
+    (tmp_path / "mvnw").write_text("#!/bin/sh\n")
+    runner = TestRunner(str(tmp_path))
+    disc = runner.discover_test_command()
+    assert disc["command"] == "./mvnw test"
+    assert disc["source"] == "pom.xml"
+
+
+def test_discovery_gradle_wrapper_preferred(tmp_path):
+    (tmp_path / "build.gradle").write_text("plugins { id 'java' }\n")
+    (tmp_path / "gradlew").write_text("#!/bin/sh\n")
+    runner = TestRunner(str(tmp_path))
+    disc = runner.discover_test_command()
+    assert disc["command"] == "./gradlew test"
+    assert disc["source"] == "build.gradle"
+
+
+def test_run_tests_command_not_found_handled(tmp_path):
+    """When a discovered test runner command is not installed, run_tests returns exit_code 127 and clean error."""
+    runner = TestRunner(str(tmp_path), test_command="nonexistent_binary_tool_xyz test")
+    res = runner.run_tests()
+    assert res["status"] == "error"
+    assert res["exit_code"] == 127
+    assert "Command not found" in res["error"]
+

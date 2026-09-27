@@ -5,7 +5,7 @@
 <div align="center">
 
 [![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](requirements.txt)
-[![Tests](https://img.shields.io/badge/tests-215%2B%20passing-success?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-230%2B%20passing-success?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![CI Status](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![Evaluation Providers](https://img.shields.io/badge/eval%20providers-DeepSeek%20%7C%20Qwen-6366F1?style=flat-square)](config/config.yaml)
 [![Credential Isolation](https://img.shields.io/badge/credentials-subprocess%20isolated-8B5CF6?style=flat-square)](src/harness/tools/env.py)
@@ -38,7 +38,7 @@ Cody enforces strict credential boundary isolation. Subprocesses executing in th
 | **Multi-Evidence Verification** | Combines git delta hashing, test runner execution, and acceptance criteria checking to confirm genuine task resolution. |
 | **Targeted Recovery Loop** | Classifies failures (syntax, test, timeout, path error), detects repeated action loops, and applies corrective prompting. |
 | **Credential Isolation** | Sanitizes subprocess environments so target-repository scripts and build commands cannot read evaluator API tokens. |
-| **Approved Evaluation Providers** | Native support for hackathon-approved **DeepSeek** and **Qwen** model families with seamless runtime selection. |
+| **Supported Evaluation Providers** | Native support for **DeepSeek** and **Qwen** model families with seamless runtime selection. |
 | **Deterministic Safeguards** | Configurable execution limits (`max_iterations: 15`, `max_recovery_attempts: 3`, command timeouts) prevent runaway loops. |
 
 ---
@@ -109,7 +109,7 @@ flowchart TD
     
     Gate -->|"No"| Classify["7. Classify Failure\nCategorize into SYNTAX / TEST / TIMEOUT / PATH"]
     Classify --> LoopGuard{"Loop Detected or\nRecovery >= max_attempts\n(Configured limit: 3)?"}
-    LoopGuard -->|"Exceeded"| Abort(["TERMINATED_FAILURE\nEmit JSON Report (Exit 0)"])
+    LoopGuard -->|"Exceeded"| Abort(["TERMINATED_FAILURE\nEmit JSON Report (Exit 1)"])
     LoopGuard -->|"Can Recover"| Replan["8. Inject Corrective Feedback\nFeed exact test errors, avoid repeating failing action"]
     Replan --> Exec
 ```
@@ -118,24 +118,26 @@ flowchart TD
 
 ## 5. Model Providers & Configuration Precedence
 
-Evaluation is officially constrained to **DeepSeek** and **Qwen** model families. Cody enforces this boundary: only approved providers can be used during evaluation, and unsupported providers (such as OpenAI, Anthropic, Gemini, or Llama) are rejected immediately at startup.
+Cody natively supports **DeepSeek** and **Qwen** model families for live evaluation. Unsupported providers (such as OpenAI, Anthropic, Gemini, or Llama) are rejected immediately at startup. In addition, an evaluator or committee-prescribed model can be enforced via `CODY_LOCKED_MODEL`, rejecting any attempted conflicting overrides.
 
 All evaluation paths use **text-only** OpenAI-compatible chat completion interfaces (`/chat/completions`). No multimodal or vision dependencies exist.
 
-### Approved Provider Matrix
+### Provider Matrix
 
 | Provider | Default Model | Endpoint | Evaluation Status |
 |:---|:---|:---|:---|
-| **DeepSeek** | `deepseek-v4-flash` | `https://api.deepseek.com/chat/completions` | **Approved Evaluation Provider** |
-| **Qwen** | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | **Approved Evaluation Provider** |
+| **DeepSeek** | `deepseek-v4-flash` | `https://api.deepseek.com/chat/completions` | **Supported Evaluation Provider** |
+| **Qwen** | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | **Supported Evaluation Provider** |
 | **Mock** | In-Memory Mock | Local Execution | **Offline Test Provider** (Not for evaluation) |
 
 ### Configuration Precedence Order
 
 Provider and model settings follow strict deterministic precedence:
 1. **CLI Arguments**: `--provider <name>`, `--model <name>` (Highest precedence)
-2. **Environment Variables**: `CODY_PROVIDER`, `CODY_MODEL`
+2. **Environment Variables**: `CODY_PROVIDER`, `CODY_MODEL` (and locked model `CODY_LOCKED_MODEL`)
 3. **Configuration File**: `config/config.yaml` (`model.provider`, `model.name`) (Base default)
+
+When a provider is overridden without explicitly specifying a model, that provider's default model is used (`deepseek-v4-flash` for DeepSeek, `qwen-plus` for Qwen). Incompatible model/provider combinations are rejected immediately without silent substitution.
 
 ### Credential Resolution Precedence
 
@@ -180,7 +182,7 @@ export AI_API_KEY="<EVALUATOR_API_KEY>"
 
 - **Single Primary Key**: The evaluator provides credentials through `AI_API_KEY`. Cody reads this directly in Python for model API calls.
 - **Subprocess Environment Sanitization**: Every subprocess executed by Cody (`shell`, `file_search`, `repo_tree`, `apply_patch`, `git`, `test_runner`, `verifier`) passes through `sanitized_env()`.
-- **Case-Insensitive Key Stripping**: `AI_API_KEY`, `DEEPSEEK_API_KEY`, `QWEN_API_KEY`, and IDE metadata prefixes (`ANTIGRAVITY_*`) are stripped before any child process is spawned. Target code cannot read evaluator secrets.
+- **Comprehensive Credential Stripping**: Evaluator keys (`AI_API_KEY`, `DEEPSEEK_API_KEY`, `QWEN_API_KEY`), third-party tokens (`GITHUB_TOKEN`, `OPENAI_API_KEY`, bearer tokens, cloud secrets, passwords, private keys), and IDE metadata prefixes (`ANTIGRAVITY_*`) are stripped before any child process is spawned. Target code cannot read evaluator secrets.
 - **Zero Disk Exposure**: API keys are never written to configuration files, repository files, or logs.
 - **Repository Cleanliness**: `.env` is gitignored and tracked repository files contain no hard-coded secrets.
 
@@ -383,3 +385,4 @@ tests/
 - **Deterministic Static Verification**: Symbol extraction uses Python AST parsing for Python files and regex fallback for other languages. Complex dynamic metaprogramming symbols may require explicit test suite coverage to establish verification.
 - **Token Bounds**: Context is bounded to prevent token window overflow (`max_tokens: 32000`). Large repositories rely on search, symbol lookups, and prioritized retrieval rather than whole-repo inlining.
 - **Iteration Limits**: Execution is deterministically bounded to `max_iterations: 15` and `max_recovery_attempts: 3` to prevent infinite loops.
+- **Process Boundary & Tool Isolation**: Cody enforces workspace directory containment against path traversal escapes, command execution timeouts, and environment sanitization. It operates as a standard process and does not implement OS-level kernel virtualization (e.g. Docker or seccomp isolation).

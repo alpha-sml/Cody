@@ -106,7 +106,10 @@ class Orchestrator:
             return True
         return False
 
-    def _expected_changed_files(self, state: State) -> set:
+    def _expected_changed_files(self, state: State, cody_files: Optional[Set[str]] = None) -> set:
+        if state.task_spec and getattr(state.task_spec, "allow_broad_changes", False):
+            return set(cody_files or state.changed_files)
+
         explicit_expected = set()
         for path in re.findall(r"\b(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b", state.task):
             if not path.endswith(".") and not re.match(r"^\d+\.\d+$", path):
@@ -121,7 +124,10 @@ class Orchestrator:
         if explicit_expected:
             return explicit_expected
 
-        # Otherwise, for generic tasks where files are discovered during execution:
+        # Otherwise, for generic tasks where no specific files were specified upfront:
+        if cody_files is not None:
+            return set(cody_files)
+
         expected = set()
         for entry in state.tool_history:
             tool_name = entry.get("tool")
@@ -152,9 +158,25 @@ class Orchestrator:
         baseline_deleted = set(baseline.get("deleted_files", []))
         current_deleted = set(verification.get("deleted_files", []))
         cody_deleted = current_deleted - baseline_deleted
+
+        # Deletion of untracked baseline files that disappeared from disk
+        for path in baseline_files - current_files:
+            if path not in baseline_deleted:
+                target_p = os.path.join(state.repo_path, path)
+                if not os.path.exists(target_p):
+                    cody_deleted.add(path)
+
         cody_files.update(cody_deleted)
 
-        expected_files = self._expected_changed_files(state)
+        # Files renamed by Cody
+        baseline_renamed = set(tuple(r) for r in baseline.get("renamed_files", []))
+        current_renamed = set(tuple(r) for r in verification.get("renamed_files", []))
+        cody_renamed = current_renamed - baseline_renamed
+        for old_p, new_p in cody_renamed:
+            cody_files.add(old_p)
+            cody_files.add(new_p)
+
+        expected_files = self._expected_changed_files(state, cody_files=cody_files)
         unexpected = cody_files - expected_files
         return cody_files, unexpected, cody_deleted
 
@@ -205,8 +227,7 @@ class Orchestrator:
                 if rf not in cody_files and not os.path.exists(full_p):
                     return "REQUIRED_FILES_NOT_MODIFIED"
 
-        has_shell_change = any(entry.get("tool") == "shell" for entry in state.tool_history)
-        if unexpected and not has_shell_change:
+        if unexpected:
             return "UNEXPECTED_CHANGES"
 
         return "VERIFIED_SUCCESS"
@@ -389,8 +410,7 @@ class Orchestrator:
                 completion_status = self._completion_gate(state, verif_res)
                 verif_res["completion_status"] = completion_status
                 cody_files, unexpected, cody_deleted = self._compute_cody_changes(state, verif_res)
-                expected_files = self._expected_changed_files(state)
-                has_shell_change = any(entry.get("tool") == "shell" for entry in state.tool_history)
+                expected_files = self._expected_changed_files(state, cody_files=cody_files)
                 ac = verif_res.get("acceptance_criteria")
                 verif_res["evidence"] = {
                     "tests": "PASS" if verif_res.get("tests_passed") else "FAIL",
@@ -398,7 +418,7 @@ class Orchestrator:
                     "cody_files": sorted(list(cody_files)),
                     "expected_files_changed": "PASS" if not (expected_files - (set(state.changed_files) | cody_deleted)) else "PARTIAL",
                     "acceptance_criteria": "PASS" if (ac and ac.get("all_passed")) else ("FAIL" if (ac and ac.get("has_failures")) else "UNRESOLVED"),
-                    "unexpected_changes": "NONE" if (not unexpected or has_shell_change) else f"FOUND ({len(unexpected)})",
+                    "unexpected_changes": "NONE" if not unexpected else f"FOUND ({len(unexpected)})",
                     "completion": completion_status,
                 }
                 self.context_manager.add_verification_result(verif_res)

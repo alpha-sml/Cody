@@ -99,10 +99,11 @@ def main():
         model_name = args.model.strip()
     elif os.environ.get("CODY_MODEL", "").strip():
         model_name = os.environ["CODY_MODEL"].strip()
-    elif provider == "qwen" and config.model.name in ("deepseek-v4-flash", "deepseek-chat"):
-        model_name = "qwen-plus"
-    else:
+    elif provider == config.model.provider.lower().strip():
         model_name = config.model.name.strip()
+    else:
+        from .model.client import DEFAULT_PROVIDER_MODELS
+        model_name = DEFAULT_PROVIDER_MODELS.get(provider, "")
 
     # Synchronize resolved CLI overrides to environment so all components see consistent settings
     if args.provider:
@@ -163,6 +164,8 @@ def main():
     print(f"Finished with status: {final_state.status}")
     print(f"Final Result: {final_state.final_result}")
     print(f"Evaluation: {json.dumps(final_state.evaluation_report, sort_keys=True)}")
+    if final_state.status == "failed":
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

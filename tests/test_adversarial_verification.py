@@ -329,3 +329,307 @@ Acceptance Criteria:
     res = ac["criteria_results"][0]
     assert res["status"] == "PASS"
     assert "valid JSON" in res["reason"]
+
+
+def test_adversarial_13_shell_modifies_unrelated_file_fails_verification(tmp_path):
+    """TEST 13: Shell tool modifying an unrelated file fails verification with UNEXPECTED_CHANGES."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    auth = tmp_path / "auth.py"
+    auth.write_text("def authenticate(): pass\n")
+    run_git(repo, "add", "auth.py")
+    run_git(repo, "commit", "-qm", "initial")
+
+    # Agent fixes auth.py but shell command also creates unrelated_secret.py
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "shell",
+                "arguments": {"command": "printf 'def authenticate(): return True\\n' > auth.py && printf 'leaked' > unrelated_secret.py"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Fix auth.py", repo_path=repo))
+    assert state.status == "failed"
+    assert state.verification_results[-1]["completion_status"] == "UNEXPECTED_CHANGES"
+    assert "unrelated_secret.py" in state.verification_results[-1]["evidence"]["cody_files"]
+
+
+def test_adversarial_14_expected_file_changed_allowed(tmp_path):
+    """TEST 14: Only expected file changed -> VERIFIED_SUCCESS."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    calc = tmp_path / "calculator.py"
+    calc.write_text("def add(): pass\n")
+    run_git(repo, "add", "calculator.py")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "file_write",
+                "arguments": {"path": "calculator.py", "content": "def add(a, b): return a + b\n"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    state = orchestrator.run(State(task="Update calculator.py", repo_path=repo))
+    assert state.status == "success"
+    assert state.verification_results[-1]["completion_status"] == "VERIFIED_SUCCESS"
+
+
+def test_adversarial_15_expected_plus_unrelated_file_changed_fails(tmp_path):
+    """TEST 15: Expected file + unrelated file changed via file_write -> failure."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    calc = tmp_path / "calculator.py"
+    calc.write_text("def add(): pass\n")
+    run_git(repo, "add", "calculator.py")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "file_write",
+                "arguments": {"path": "unrelated_extra.py", "content": "x = 42\n"},
+            },
+            {
+                "action": "tool_call",
+                "tool": "file_write",
+                "arguments": {"path": "calculator.py", "content": "def add(a, b): return a + b\n"},
+            },
+        ],
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Update calculator.py", repo_path=repo))
+    assert state.status == "failed"
+    assert state.verification_results[-1]["completion_status"] == "UNEXPECTED_CHANGES"
+
+
+def test_adversarial_16_preexisting_unrelated_modification_not_attributed_to_cody(tmp_path):
+    """TEST 16: Pre-existing dirty modification in repo is not attributed to Cody."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+
+    calc = tmp_path / "calculator.py"
+    calc.write_text("def add(): pass\n")
+    dirty = tmp_path / "preexisting_dirty.py"
+    dirty.write_text("# committed\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-qm", "initial")
+
+    # Dirty modification made BEFORE Cody baseline is captured
+    dirty.write_text("# pre-existing user modification\n")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "file_write",
+                "arguments": {"path": "calculator.py", "content": "def add(a, b): return a + b\n"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    state = orchestrator.run(State(task="Update calculator.py", repo_path=repo))
+    assert state.status == "success"
+    assert "preexisting_dirty.py" not in state.verification_results[-1]["evidence"]["cody_files"]
+    assert state.verification_results[-1]["completion_status"] == "VERIFIED_SUCCESS"
+
+
+def test_adversarial_17_deletion_detected(tmp_path):
+    """TEST 17: Unexpected deletion of tracked file is detected as UNEXPECTED_CHANGES."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    keep = tmp_path / "keep.py"
+    keep.write_text("x = 1\n")
+    victim = tmp_path / "victim.py"
+    victim.write_text("y = 2\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "shell",
+                "arguments": {"command": "rm victim.py && printf 'x = 2\\n' > keep.py"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Update keep.py", repo_path=repo))
+    assert state.status == "failed"
+    assert state.verification_results[-1]["completion_status"] == "UNEXPECTED_CHANGES"
+    assert "victim.py" in state.verification_results[-1]["evidence"]["cody_files"]
+
+
+def test_adversarial_18_rename_detected(tmp_path):
+    """TEST 18: Unexpected rename of file is detected as UNEXPECTED_CHANGES."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    keep = tmp_path / "keep.py"
+    keep.write_text("x = 1\n")
+    old_f = tmp_path / "old_name.py"
+    old_f.write_text("z = 3\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "shell",
+                "arguments": {"command": "git mv old_name.py new_name.py && printf 'x = 2\\n' > keep.py"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Update keep.py", repo_path=repo))
+    assert state.status == "failed"
+    assert state.verification_results[-1]["completion_status"] == "UNEXPECTED_CHANGES"
+
+
+def test_adversarial_19_untracked_file_detected(tmp_path):
+    """TEST 19: Unexpected untracked file created during execution is detected."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    target = tmp_path / "target.py"
+    target.write_text("val = 1\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "shell",
+                "arguments": {"command": "printf 'val = 2\\n' > target.py && printf 'rogue' > rogue_untracked.txt"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Update target.py", repo_path=repo))
+    assert state.status == "failed"
+    assert state.verification_results[-1]["completion_status"] == "UNEXPECTED_CHANGES"
+    assert "rogue_untracked.txt" in state.verification_results[-1]["evidence"]["cody_files"]
+
+
+def test_adversarial_20_staged_modification_correctly_attributed(tmp_path):
+    """TEST 20: Staged unexpected file is detected and attributed to Cody."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    target = tmp_path / "target.py"
+    target.write_text("val = 1\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "shell",
+                "arguments": {"command": "printf 'val = 2\\n' > target.py && printf 'rogue' > staged_bad.py && git add staged_bad.py target.py"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+        max_recovery_attempts=1,
+    )
+
+    state = orchestrator.run(State(task="Update target.py", repo_path=repo))
+    assert state.status == "failed"
+    assert state.verification_results[-1]["completion_status"] == "UNEXPECTED_CHANGES"
+
+
+def test_adversarial_21_ignored_cache_artifact_handled_according_to_policy(tmp_path):
+    """TEST 21: Ignored cache artifacts (.pytest_cache, __pycache__) do not trigger UNEXPECTED_CHANGES."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    target = tmp_path / "target.py"
+    target.write_text("val = 1\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "shell",
+                "arguments": {"command": "printf 'val = 2\\n' > target.py && mkdir -p __pycache__ && printf 'bytecode' > __pycache__/target.cpython-312.pyc"},
+            }
+        ],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    state = orchestrator.run(State(task="Update target.py", repo_path=repo))
+    assert state.status == "success"
+    assert state.verification_results[-1]["completion_status"] == "VERIFIED_SUCCESS"
+    assert not any("__pycache__" in f for f in state.verification_results[-1]["evidence"]["cody_files"])
+
+
+def test_adversarial_22_explicit_broad_scope_permitted_by_task_spec(tmp_path):
+    """TEST 22: When task explicitly permits broad changes, wide changes are allowed."""
+    repo = str(tmp_path)
+    initialize_git_repo(repo)
+    f1 = tmp_path / "f1.py"
+    f1.write_text("a = 1\n")
+    f2 = tmp_path / "f2.py"
+    f2.write_text("b = 2\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-qm", "initial")
+
+    orchestrator, model, verifier = build_pipeline(
+        repo,
+        [
+            {
+                "action": "tool_call",
+                "tool": "file_write",
+                "arguments": {"path": "f1.py", "content": "a = 10\n"},
+            },
+            {
+                "action": "tool_call",
+                "tool": "file_write",
+                "arguments": {"path": "f2.py", "content": "b = 20\n"},
+            },
+            {
+                "action": "tool_call",
+                "tool": "file_write",
+                "arguments": {"path": "f3_new.py", "content": "c = 30\n"},
+            },
+        ],
+        [{"status": "success", "exit_code": 0}],
+    )
+
+    task_text = "Refactor components. Allow broad changes across the repository."
+    spec = TaskSpec.from_text(task_text)
+    assert spec.allow_broad_changes is True
+
+    state = orchestrator.run(State(task=task_text, task_spec=spec, repo_path=repo))
+    assert state.status == "success"
+    assert state.verification_results[-1]["completion_status"] == "VERIFIED_SUCCESS"
+

@@ -182,16 +182,18 @@ class TestRunner:
 
         # Priority 7: Maven
         if (repo_path / "pom.xml").is_file():
+            mvn_cmd = "./mvnw test" if (repo_path / "mvnw").is_file() else "mvn test"
             return {
-                "command": "mvn test",
+                "command": mvn_cmd,
                 "source": "pom.xml",
                 "confidence": "high",
             }
 
         # Priority 8: Gradle
         if (repo_path / "build.gradle").is_file() or (repo_path / "build.gradle.kts").is_file():
+            gradle_cmd = "./gradlew test" if (repo_path / "gradlew").is_file() else "gradle test"
             return {
-                "command": "gradle test",
+                "command": gradle_cmd,
                 "source": "build.gradle",
                 "confidence": "high",
             }
@@ -234,6 +236,15 @@ class TestRunner:
                 "exit_code": -1,
                 "stdout": "",
                 "stderr": "",
+                "discovery": discovery,
+            }
+        except FileNotFoundError as e:
+            return {
+                "status": "error",
+                "error": f"Command not found: {cmd_str} ({e})",
+                "exit_code": 127,
+                "stdout": "",
+                "stderr": str(e),
                 "discovery": discovery,
             }
         except Exception as e:

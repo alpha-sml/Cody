@@ -67,6 +67,9 @@ class Verifier:
                     old_path = old_path.strip().strip('"')
                     new_path = new_path.strip().strip('"')
                     renamed_files.append((old_path, new_path))
+                    if not _is_ignored(old_path):
+                        deleted_files.append(old_path)
+                        tracked_changes.append(old_path)
                     path = new_path
                 else:
                     path = raw_path.strip('"')
