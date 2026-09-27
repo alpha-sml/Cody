@@ -229,7 +229,8 @@ class TestEvaluatorSmoke:
             if line.startswith("Evaluation:"):
                 eval_json = json.loads(line.replace("Evaluation: ", ""))
                 assert "task" in eval_json
-                assert "model_provider" in eval_json
+                assert eval_json["model_provider"] == "deepseek"
+                assert eval_json["model_name"] == "deepseek-v4-flash"
                 assert "final_status" in eval_json
                 assert "model_call_count" in eval_json
                 break
@@ -257,6 +258,7 @@ class TestEvaluatorSmoke:
         assert "Finished with status: success" in output
         assert '"completion_status": "VERIFIED_SUCCESS"' in output
         assert '"model_provider": "qwen"' in output
+        assert '"model_name": "qwen-plus"' in output
 
     def test_evaluator_unsupported_provider_exits(self, monkeypatch, tmp_path, capsys):
         """Selecting an unapproved evaluation provider exits with clear error."""

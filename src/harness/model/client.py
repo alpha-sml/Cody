@@ -42,7 +42,7 @@ def validate_model_name(model_name: str) -> str:
 SUPPORTED_PROVIDERS = frozenset(["deepseek", "qwen"])
 
 DEFAULT_PROVIDER_MODELS = {
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-v4-flash",
     "qwen": "qwen-plus",
 }
 
@@ -64,7 +64,7 @@ def get_client(model_name: str, provider: str = "deepseek") -> BaseModelClient:
         return MockClient()
 
     # Automatically use provider default if model name was not explicitly overridden
-    if provider == "qwen" and (not model_name or model_name == DEFAULT_PROVIDER_MODELS["deepseek"]):
+    if provider == "qwen" and (not model_name or model_name in (DEFAULT_PROVIDER_MODELS["deepseek"], "deepseek-chat")):
         model_name = DEFAULT_PROVIDER_MODELS["qwen"]
     elif not model_name and provider in DEFAULT_PROVIDER_MODELS:
         model_name = DEFAULT_PROVIDER_MODELS[provider]

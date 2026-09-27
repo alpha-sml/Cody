@@ -73,7 +73,7 @@ def test_validate_action_invalid_argument_type():
     assert res["error_type"] == "invalid_argument_type"
 
 def test_deepseek_client_function_call_parsing():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
@@ -99,7 +99,7 @@ def test_deepseek_client_function_call_parsing():
     assert action == {"action": "tool_call", "tool": "file_write", "arguments": {"path": "test.py", "content": "print('hello')"}}
 
 def test_deepseek_client_json_text_parsing():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
@@ -117,14 +117,14 @@ def test_deepseek_client_json_text_parsing():
 
 def test_deepseek_client_timeout():
     import requests
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
     with patch('requests.post', side_effect=requests.exceptions.Timeout):
         action = client.generate("test")
     assert action["action"] == "error"
     assert action["error_type"] == "model_api_timeout"
 
 def test_deepseek_client_provider_error():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
     mock_response = MagicMock()
     mock_response.status_code = 500
     mock_response.text = "Internal Server Error"
@@ -134,7 +134,7 @@ def test_deepseek_client_provider_error():
     assert action["error_type"] == "model_api_error"
 
 def test_deepseek_client_malformed_response():
-    client = DeepSeekClient(api_key="fake", model_name="deepseek-chat")
+    client = DeepSeekClient(api_key="fake", model_name="deepseek-v4-flash")
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"choices": []} # No choices
@@ -235,23 +235,24 @@ def clean_env_for_client_tests():
 def test_get_client_with_ai_api_key():
     """AI_API_KEY is the primary credential (evaluator interface)."""
     os.environ["AI_API_KEY"] = "eval-key"
-    client = get_client("deepseek-chat", "deepseek")
+    client = get_client("deepseek-v4-flash", "deepseek")
     assert isinstance(client, DeepSeekClient)
     assert client.api_key == "eval-key"
+    assert client.model_name == "deepseek-v4-flash"
 
 
 def test_get_client_ai_api_key_takes_priority():
     """AI_API_KEY takes priority over provider-specific keys."""
     os.environ["AI_API_KEY"] = "eval-key"
     os.environ["DEEPSEEK_API_KEY"] = "ds-key"
-    client = get_client("deepseek-chat", "deepseek")
+    client = get_client("deepseek-v4-flash", "deepseek")
     assert client.api_key == "eval-key"
 
 
 def test_get_client_provider_key_fallback():
     """Provider-specific key works when AI_API_KEY is absent."""
     os.environ["DEEPSEEK_API_KEY"] = "ds-key"
-    client = get_client("deepseek-chat", "deepseek")
+    client = get_client("deepseek-v4-flash", "deepseek")
     assert isinstance(client, DeepSeekClient)
     assert client.api_key == "ds-key"
 
@@ -282,7 +283,7 @@ def test_get_client_unsupported():
 def test_get_client_missing_credentials():
     """Clear error when no API key is set."""
     with pytest.raises(ValueError, match="No API key found"):
-        get_client("deepseek-chat", "deepseek")
+        get_client("deepseek-v4-flash", "deepseek")
 
 
 def test_validate_model_name_rejects_placeholder():
@@ -297,6 +298,7 @@ def test_validate_model_name_rejects_empty():
 
 
 def test_validate_model_name_accepts_real():
+    assert validate_model_name("deepseek-v4-flash") == "deepseek-v4-flash"
     assert validate_model_name("deepseek-chat") == "deepseek-chat"
 
 
@@ -304,14 +306,14 @@ def test_get_client_env_overrides(monkeypatch):
     """CODY_PROVIDER and CODY_MODEL env vars override arguments."""
     os.environ["AI_API_KEY"] = "key"
     os.environ["CODY_PROVIDER"] = "mock"
-    client = get_client("deepseek-chat", "deepseek")
+    client = get_client("deepseek-v4-flash", "deepseek")
     assert isinstance(client, MockClient)
 
 
 def test_credentials_never_logged(capsys):
     """API key value must never appear in stdout/stderr."""
     os.environ["AI_API_KEY"] = "super-secret-key-12345"
-    client = get_client("deepseek-chat", "deepseek")
+    client = get_client("deepseek-v4-flash", "deepseek")
     output = capsys.readouterr()
     assert "super-secret-key-12345" not in output.out
     assert "super-secret-key-12345" not in output.err
@@ -320,19 +322,55 @@ def test_credentials_never_logged(capsys):
 def test_approved_providers_accepted_with_ai_api_key():
     """Both DeepSeek and Qwen are approved evaluation providers."""
     os.environ["AI_API_KEY"] = "eval-key"
-    ds = get_client("deepseek-chat", "deepseek")
+    ds = get_client("deepseek-v4-flash", "deepseek")
     assert isinstance(ds, DeepSeekClient)
+    assert ds.model_name == "deepseek-v4-flash"
 
     qw = get_client("qwen-max", "qwen")
     assert isinstance(qw, QwenClient)
+    assert qw.model_name == "qwen-max"
+
+
+def test_deepseek_default_model():
+    """DeepSeek defaults to deepseek-v4-flash when model_name is omitted."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    client = get_client("", "deepseek")
+    assert isinstance(client, DeepSeekClient)
+    assert client.model_name == "deepseek-v4-flash"
 
 
 def test_qwen_default_model_fallback():
     """When switching to qwen without specifying model, default to qwen-plus."""
     os.environ["AI_API_KEY"] = "eval-key"
-    qw = get_client("deepseek-chat", "qwen")
+    qw = get_client("deepseek-v4-flash", "qwen")
     assert isinstance(qw, QwenClient)
     assert qw.model_name == "qwen-plus"
+
+    qw_empty = get_client("", "qwen")
+    assert isinstance(qw_empty, QwenClient)
+    assert qw_empty.model_name == "qwen-plus"
+
+
+def test_cody_provider_env_switches_default():
+    """CODY_PROVIDER=qwen switches provider and defaults model to qwen-plus."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    os.environ["CODY_PROVIDER"] = "qwen"
+    client = get_client("deepseek-v4-flash", "deepseek")
+    assert isinstance(client, QwenClient)
+    assert client.model_name == "qwen-plus"
+
+
+def test_cody_model_env_overrides_default():
+    """CODY_MODEL explicitly overrides default for both providers."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    os.environ["CODY_MODEL"] = "deepseek-custom-v4"
+    client = get_client("deepseek-v4-flash", "deepseek")
+    assert client.model_name == "deepseek-custom-v4"
+
+    os.environ["CODY_PROVIDER"] = "qwen"
+    os.environ["CODY_MODEL"] = "qwen-turbo-custom"
+    client2 = get_client("deepseek-v4-flash", "deepseek")
+    assert client2.model_name == "qwen-turbo-custom"
 
 
 @pytest.mark.parametrize("bad_provider", ["openai", "anthropic", "gemini", "llama"])

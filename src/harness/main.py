@@ -98,7 +98,7 @@ def main():
         model_name = args.model
     elif os.environ.get("CODY_MODEL", "").strip():
         model_name = os.environ["CODY_MODEL"].strip()
-    elif provider == "qwen" and config.model.name == "deepseek-chat":
+    elif provider == "qwen" and config.model.name in ("deepseek-v4-flash", "deepseek-chat"):
         model_name = "qwen-plus"
     else:
         model_name = config.model.name

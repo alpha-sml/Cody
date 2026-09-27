@@ -2,7 +2,7 @@
 
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen?style=flat-square&logo=githubactions)](.github/workflows/ci.yml)
 [![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue?style=flat-square&logo=python)](requirements.txt)
-[![Tests](https://img.shields.io/badge/tests-197%20passing-success?style=flat-square&logo=pytest)](tests/)
+[![Tests](https://img.shields.io/badge/tests-200%20passing-success?style=flat-square&logo=pytest)](tests/)
 [![Security](https://img.shields.io/badge/credentials-subprocess%20isolated-blueviolet?style=flat-square&logo=shield)](src/harness/tools/env.py)
 [![Architecture](https://img.shields.io/badge/architecture-autonomous%20agent-orange?style=flat-square)](src/harness/)
 
@@ -129,7 +129,7 @@ Configuration defaults reside in [`config/config.yaml`](config/config.yaml):
 ```yaml
 model:
   # Supported evaluation providers: "deepseek" (default) or "qwen"
-  name: "deepseek-chat"
+  name: "deepseek-v4-flash"
   provider: "deepseek"
   max_tokens: 8192
 ```
@@ -138,7 +138,7 @@ model:
 
 | Provider | Base URL | Default Model | Configurable Models |
 |:---------|:---------|:--------------|:--------------------|
-| `deepseek` | `api.deepseek.com` | `deepseek-chat` | `deepseek-chat`, `deepseek-coder`, or any valid DeepSeek model ID |
+| `deepseek` | `api.deepseek.com` | `deepseek-v4-flash` | `deepseek-v4-flash`, `deepseek-coder`, or any valid DeepSeek model ID |
 | `qwen` | `dashscope.aliyuncs.com` | `qwen-plus` | `qwen-plus`, `qwen-max`, `qwen-turbo`, or any valid Qwen model ID |
 | `mock` | Local In-Memory | N/A | Offline deterministic mock for CI and unit tests (`MOCK_MODEL=true`) |
 
@@ -264,7 +264,7 @@ Run the comprehensive automated test suite:
 make test
 ```
 
-### Coverage Distribution (197 Automated Tests)
+### Coverage Distribution (200 Automated Tests)
 
 ```
 tests/
@@ -296,7 +296,7 @@ Upon task completion or termination, Cody prints an evaluation payload to standa
   "completion_status": "VERIFIED_SUCCESS",
   "changed_files": ["src/auth/login.py"],
   "model_provider": "deepseek",
-  "model_name": "deepseek-chat",
+  "model_name": "deepseek-v4-flash",
   "model_call_count": 3,
   "model_calls": {
     "planner": 1,

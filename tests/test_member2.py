@@ -31,7 +31,7 @@ def test_extract_json_fences():
     assert res4["error_type"] == "invalid_model_response"
 
 def test_api_failure_behavior():
-    client = DeepSeekClient("fake_key", "deepseek-chat")
+    client = DeepSeekClient("fake_key", "deepseek-v4-flash")
 
     # 1. Timeout
     with patch("requests.post", side_effect=requests.Timeout):
