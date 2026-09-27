@@ -26,6 +26,7 @@ def sanitized_env() -> Dict[str, str]:
     """Return a copy of ``os.environ`` with all credential keys removed."""
     env = os.environ.copy()
     for key in list(env.keys()):
-        if key in _SENSITIVE_KEYS or any(key.startswith(p) for p in _SENSITIVE_PREFIXES):
+        k_upper = key.upper()
+        if k_upper in _SENSITIVE_KEYS or any(k_upper.startswith(p) for p in _SENSITIVE_PREFIXES):
             env.pop(key, None)
     return env

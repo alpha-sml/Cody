@@ -1,4 +1,5 @@
 model:
+  # Supported evaluation providers: "deepseek" (default) or "qwen"
   name: "deepseek-chat"
   provider: "deepseek"
   max_tokens: 8192

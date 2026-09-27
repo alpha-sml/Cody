@@ -92,7 +92,16 @@ def main():
     config = load_config()
 
     provider = args.provider if args.provider else config.model.provider
-    model_name = args.model if args.model else config.model.name
+    provider = os.environ.get("CODY_PROVIDER", provider).lower().strip()
+
+    if args.model:
+        model_name = args.model
+    elif os.environ.get("CODY_MODEL", "").strip():
+        model_name = os.environ["CODY_MODEL"].strip()
+    elif provider == "qwen" and config.model.name == "deepseek-chat":
+        model_name = "qwen-plus"
+    else:
+        model_name = config.model.name
 
     try:
         model_client = get_client(model_name, provider)

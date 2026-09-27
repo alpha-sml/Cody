@@ -39,17 +39,35 @@ def validate_model_name(model_name: str) -> str:
     return model_name.strip()
 
 
+SUPPORTED_PROVIDERS = frozenset(["deepseek", "qwen"])
+
+DEFAULT_PROVIDER_MODELS = {
+    "deepseek": "deepseek-chat",
+    "qwen": "qwen-plus",
+}
+
+
 def get_client(model_name: str, provider: str = "deepseek") -> BaseModelClient:
     # Allow env-var overrides for evaluator flexibility
     provider = os.environ.get("CODY_PROVIDER", provider).lower().strip()
     model_name = os.environ.get("CODY_MODEL", model_name).strip()
 
+    # Reject unsupported providers early so mock mode cannot mask invalid configurations
+    if provider != "mock" and provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(
+            f"Unknown provider: '{provider}'. Evaluation is restricted to approved providers: "
+            f"{', '.join(sorted(SUPPORTED_PROVIDERS))}."
+        )
+
     is_mock = os.environ.get("MOCK_MODEL", "false").lower() == "true" or provider == "mock"
     if is_mock:
         return MockClient()
 
-    if provider not in ("deepseek", "qwen"):
-        raise ValueError(f"Unknown provider: {provider}")
+    # Automatically use provider default if model name was not explicitly overridden
+    if provider == "qwen" and (not model_name or model_name == DEFAULT_PROVIDER_MODELS["deepseek"]):
+        model_name = DEFAULT_PROVIDER_MODELS["qwen"]
+    elif not model_name and provider in DEFAULT_PROVIDER_MODELS:
+        model_name = DEFAULT_PROVIDER_MODELS[provider]
 
     model_name = validate_model_name(model_name)
     api_key = _resolve_api_key(provider)

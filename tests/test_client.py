@@ -316,3 +316,36 @@ def test_credentials_never_logged(capsys):
     assert "super-secret-key-12345" not in output.out
     assert "super-secret-key-12345" not in output.err
 
+
+def test_approved_providers_accepted_with_ai_api_key():
+    """Both DeepSeek and Qwen are approved evaluation providers."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    ds = get_client("deepseek-chat", "deepseek")
+    assert isinstance(ds, DeepSeekClient)
+
+    qw = get_client("qwen-max", "qwen")
+    assert isinstance(qw, QwenClient)
+
+
+def test_qwen_default_model_fallback():
+    """When switching to qwen without specifying model, default to qwen-plus."""
+    os.environ["AI_API_KEY"] = "eval-key"
+    qw = get_client("deepseek-chat", "qwen")
+    assert isinstance(qw, QwenClient)
+    assert qw.model_name == "qwen-plus"
+
+
+@pytest.mark.parametrize("bad_provider", ["openai", "anthropic", "gemini", "llama"])
+def test_unsupported_providers_rejected(bad_provider):
+    """Evaluation rejects all providers outside deepseek and qwen."""
+    with pytest.raises(ValueError, match="Unknown provider"):
+        get_client("model", bad_provider)
+
+
+def test_unsupported_provider_rejected_even_in_mock_mode():
+    """Mock mode cannot bypass approved provider validation."""
+    os.environ["MOCK_MODEL"] = "true"
+    os.environ["CODY_PROVIDER"] = "openai"
+    with pytest.raises(ValueError, match="Unknown provider"):
+        get_client("model", "openai")
+

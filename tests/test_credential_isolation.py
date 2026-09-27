@@ -3,8 +3,11 @@ import subprocess
 import pytest
 from src.harness.tools.shell import ShellTool
 from src.harness.tools.file_tools import FileSearchTool, RepoTreeTool, ApplyPatchTool, FileWriteTool
+from src.harness.tools.code_tools import FindSymbolTool, FindReferencesTool
 from src.harness.tools.git import GitStatusTool, GitDiffTool, GitLogTool
+from src.harness.tools.env import sanitized_env
 from src.harness.verification.test_runner import TestRunner
+from src.harness.verification.verifier import Verifier
 
 
 @pytest.fixture(autouse=True)
@@ -122,3 +125,39 @@ def test_git_tools_credential_isolation(tmp_path):
     assert res_log["status"] == "success"
     assert "init" in res_log["output"]
     assert "secret-evaluator-token-xyz" not in str(res_log)
+
+
+def test_verifier_credential_isolation(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(tmp_path), check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_path), check=True)
+    (tmp_path / "file.txt").write_text("hello\n")
+    runner = TestRunner(str(tmp_path))
+    verifier = Verifier(runner, str(tmp_path))
+    repo_info = verifier.inspect_repository()
+    assert "secret-evaluator-token-xyz" not in str(repo_info)
+    assert "secret-deepseek-key-123" not in str(repo_info)
+    assert "secret-qwen-key-456" not in str(repo_info)
+
+
+def test_code_tools_credential_isolation(tmp_path):
+    (tmp_path / "module.py").write_text("def my_symbol():\n    pass\n")
+    find_sym = FindSymbolTool(str(tmp_path))
+    res_sym = find_sym.execute(symbol="my_symbol")
+    assert res_sym["status"] == "success"
+    assert "secret-evaluator-token-xyz" not in str(res_sym)
+
+    find_ref = FindReferencesTool(str(tmp_path))
+    res_ref = find_ref.execute(symbol="my_symbol")
+    assert res_ref["status"] == "success"
+    assert "secret-evaluator-token-xyz" not in str(res_ref)
+
+
+def test_sanitized_env_case_insensitivity(monkeypatch):
+    monkeypatch.setenv("ai_api_key", "lower-key")
+    monkeypatch.setenv("Ai_Api_Key", "mixed-key")
+    monkeypatch.setenv("antigravity_metadata", "meta-lower")
+    env = sanitized_env()
+    assert "ai_api_key" not in env
+    assert "Ai_Api_Key" not in env
+    assert "antigravity_metadata" not in env

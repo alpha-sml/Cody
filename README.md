@@ -2,7 +2,7 @@
 
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen?style=flat-square&logo=githubactions)](.github/workflows/ci.yml)
 [![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue?style=flat-square&logo=python)](requirements.txt)
-[![Tests](https://img.shields.io/badge/tests-185%20passing-success?style=flat-square&logo=pytest)](tests/)
+[![Tests](https://img.shields.io/badge/tests-197%20passing-success?style=flat-square&logo=pytest)](tests/)
 [![Security](https://img.shields.io/badge/credentials-subprocess%20isolated-blueviolet?style=flat-square&logo=shield)](src/harness/tools/env.py)
 [![Architecture](https://img.shields.io/badge/architecture-autonomous%20agent-orange?style=flat-square)](src/harness/)
 
@@ -120,35 +120,53 @@ Cody enforces strict credential boundary isolation preventing target code from a
 
 ## ⚙️ Model Configuration
 
+Evaluation is officially constrained to **DeepSeek** and **Qwen** model families. Cody enforces this boundary: only approved providers can be used during evaluation, and unsupported providers (e.g., OpenAI, Anthropic, Gemini) are rejected immediately at startup.
+
+All evaluation paths use **text-only** OpenAI-compatible chat completion interfaces. No multimodal/image dependencies exist.
+
 Configuration defaults reside in [`config/config.yaml`](config/config.yaml):
 
 ```yaml
 model:
+  # Supported evaluation providers: "deepseek" (default) or "qwen"
   name: "deepseek-chat"
   provider: "deepseek"
   max_tokens: 8192
 ```
 
-### Runtime Model Overrides (Zero Code Changes)
+### Approved Evaluation Providers
 
-Override dynamically via environment variables:
+| Provider | Base URL | Default Model | Configurable Models |
+|:---------|:---------|:--------------|:--------------------|
+| `deepseek` | `api.deepseek.com` | `deepseek-chat` | `deepseek-chat`, `deepseek-coder`, or any valid DeepSeek model ID |
+| `qwen` | `dashscope.aliyuncs.com` | `qwen-plus` | `qwen-plus`, `qwen-max`, `qwen-turbo`, or any valid Qwen model ID |
+| `mock` | Local In-Memory | N/A | Offline deterministic mock for CI and unit tests (`MOCK_MODEL=true`) |
+
+### Switching Between Approved Providers (Zero Code Changes)
+
+The evaluator supplies `AI_API_KEY` in the environment. Switching between DeepSeek and Qwen requires **no source modifications**:
+
+**Option 1 — Environment Variables (Recommended):**
 ```bash
-export CODY_MODEL="deepseek-coder"
-export CODY_PROVIDER="deepseek"   # Options: "deepseek", "qwen"
+# To evaluate with DeepSeek (default):
+export AI_API_KEY="<EVALUATOR_KEY>"
+make run
+
+# To evaluate with Qwen:
+export AI_API_KEY="<EVALUATOR_KEY>"
+export CODY_PROVIDER="qwen"
+# Optionally specify model (defaults to qwen-plus):
+export CODY_MODEL="qwen-max"
+make run
 ```
 
-Or via CLI arguments:
+**Option 2 — CLI Arguments:**
 ```bash
-make run ARGS="--task 'Fix bug' --model qwen-max --provider qwen"
+make run ARGS="--provider qwen --model qwen-max"
 ```
 
-### Supported Providers
-
-| Provider | Base URL | Supported Models |
-|:---------|:---------|:-----------------|
-| `deepseek` | `api.deepseek.com` | `deepseek-chat`, `deepseek-coder` |
-| `qwen` | `dashscope.aliyuncs.com` | `qwen-max`, `qwen-turbo`, `qwen-plus` |
-| `mock` | Local In-Memory | Fully offline deterministic mock for testing (`MOCK_MODEL=true`) |
+> [!NOTE]
+> Attempting to select an unsupported provider (e.g. `CODY_PROVIDER=openai`) fails immediately with a clear configuration error.
 
 ---
 
@@ -246,7 +264,7 @@ Run the comprehensive automated test suite:
 make test
 ```
 
-### Coverage Distribution (185 Automated Tests)
+### Coverage Distribution (197 Automated Tests)
 
 ```
 tests/
