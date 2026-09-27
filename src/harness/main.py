@@ -72,11 +72,7 @@ def _resolve_task(args) -> TaskSpec:
         print("Error: No task provided. Supply via --task, CODY_TASK env var, or stdin.")
         sys.exit(1)
 
-    return TaskSpec(
-        title=task_text.split("\n")[0][:200],
-        description=task_text,
-        source=source,
-    )
+    return TaskSpec.from_text(task_text, source=source)
 
 
 def main():
@@ -91,17 +87,28 @@ def main():
 
     config = load_config()
 
-    provider = args.provider if args.provider else config.model.provider
-    provider = os.environ.get("CODY_PROVIDER", provider).lower().strip()
+    # Precedence: CLI option > Environment variable > Config file
+    if args.provider:
+        provider = args.provider.lower().strip()
+    elif os.environ.get("CODY_PROVIDER", "").strip():
+        provider = os.environ["CODY_PROVIDER"].lower().strip()
+    else:
+        provider = config.model.provider.lower().strip()
 
     if args.model:
-        model_name = args.model
+        model_name = args.model.strip()
     elif os.environ.get("CODY_MODEL", "").strip():
         model_name = os.environ["CODY_MODEL"].strip()
     elif provider == "qwen" and config.model.name in ("deepseek-v4-flash", "deepseek-chat"):
         model_name = "qwen-plus"
     else:
-        model_name = config.model.name
+        model_name = config.model.name.strip()
+
+    # Synchronize resolved CLI overrides to environment so all components see consistent settings
+    if args.provider:
+        os.environ["CODY_PROVIDER"] = provider
+    if args.model:
+        os.environ["CODY_MODEL"] = model_name
 
     try:
         model_client = get_client(model_name, provider)

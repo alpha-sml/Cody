@@ -73,6 +73,45 @@ class RecoveryManager:
         if category == "test_failure":
             if "git_diff" in state.context:
                 targeted_context["recent_diff"] = state.context["git_diff"]
+        elif category == "patch_failure":
+            import os
+            repo_path = state.repo_path or "."
+            refreshed = {}
+            for af in affected_files:
+                full_p = os.path.join(repo_path, af)
+                if os.path.isfile(full_p):
+                    try:
+                        with open(full_p, "r", encoding="utf-8", errors="replace") as pf:
+                            refreshed[af] = pf.read()[:5000]
+                    except OSError:
+                        pass
+            if refreshed:
+                targeted_context["refreshed_file_contents"] = refreshed
+        elif category == "import_error":
+            import os, re
+            repo_path = state.repo_path or "."
+            msg = classified.get("message", "")
+            mod_match = re.search(r"No module named ['\"]([^'\"]+)['\"]", msg)
+            if mod_match:
+                missing_mod = mod_match.group(1).split(".")[0]
+                is_local = os.path.isdir(os.path.join(repo_path, missing_mod)) or os.path.isfile(os.path.join(repo_path, f"{missing_mod}.py"))
+                targeted_context["import_analysis"] = {
+                    "missing_module": missing_mod,
+                    "is_local": is_local,
+                    "likely_type": "local_project_module" if is_local else "external_dependency",
+                }
+        elif category == "file_error":
+            import os, re
+            repo_path = state.repo_path or "."
+            file_match = re.search(r"(?:No such file or directory|FileNotFoundError).*?['\"]([^'\"]+)['\"]", classified.get("message", ""))
+            if file_match:
+                missing_path = file_match.group(1)
+                parent_dir = os.path.dirname(os.path.join(repo_path, missing_path)) or repo_path
+                if os.path.isdir(parent_dir):
+                    try:
+                        targeted_context["existing_files_in_directory"] = sorted(os.listdir(parent_dir))[:20]
+                    except OSError:
+                        pass
 
         guidance = _RECOVERY_GUIDANCE.get(category, _RECOVERY_GUIDANCE["unknown"])
 

@@ -119,12 +119,50 @@ class TestRunner:
             except OSError:
                 pass
 
-        if (repo_path / "tests").is_dir() or (repo_path / "test").is_dir():
-            return {
-                "command": "pytest",
-                "source": "tests_dir",
-                "confidence": "medium",
-            }
+        tox_ini = repo_path / "tox.ini"
+        if tox_ini.is_file():
+            try:
+                content = tox_ini.read_text(encoding="utf-8", errors="replace")
+                if "pytest" in content.lower():
+                    return {
+                        "command": "pytest",
+                        "source": "tox.ini",
+                        "confidence": "high",
+                    }
+                return {
+                    "command": "tox",
+                    "source": "tox.ini",
+                    "confidence": "high",
+                }
+            except OSError:
+                pass
+
+        # Check tests/ or test/ directory with evidence of python test files
+        for t_dir_name in ["tests", "test"]:
+            t_dir = repo_path / t_dir_name
+            if t_dir.is_dir():
+                try:
+                    py_files = list(t_dir.glob("**/test_*.py")) + list(t_dir.glob("**/*_test.py")) + list(t_dir.glob("**/*.py"))
+                    if py_files:
+                        return {
+                            "command": "pytest",
+                            "source": "tests_dir",
+                            "confidence": "medium",
+                        }
+                except OSError:
+                    pass
+
+        # Check root test files matching standard conventions
+        try:
+            root_tests = list(repo_path.glob("test_*.py")) + list(repo_path.glob("*_test.py"))
+            if root_tests:
+                return {
+                    "command": "pytest",
+                    "source": "root_test_files",
+                    "confidence": "medium",
+                }
+        except OSError:
+            pass
 
         # Priority 5: Cargo
         if (repo_path / "Cargo.toml").is_file():

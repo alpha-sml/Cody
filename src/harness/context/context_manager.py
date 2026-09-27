@@ -45,6 +45,11 @@ class ContextManager:
         base = os.path.basename(path)
         if path in self.task_files or base in self.task_files or any(tf in path for tf in self.task_files):
             return 100
+        # Prioritize test files corresponding to task files
+        for tf in self.task_files:
+            tf_stem = os.path.splitext(os.path.basename(tf))[0]
+            if tf_stem and (f"test_{tf_stem}" in base or f"{tf_stem}_test" in base):
+                return 85
         if any(sym in path or (content and sym in content) for sym in self.task_symbols):
             return 80
         return 20
@@ -106,6 +111,22 @@ class ContextManager:
             matches = re.findall(r"^([^:\n]+):", res["results"], re.MULTILINE)
             for m in matches[:5]:
                 self.add_relevant_file(m.strip(), priority=40)
+        elif tool == "find_symbol" and "matches" in res:
+            self.tool_results.append(result)
+            if len(self.tool_results) > 5:
+                self.tool_results.pop(0)
+            for line in res.get("matches", [])[:5]:
+                m = re.match(r"^([^:\n]+):", line)
+                if m:
+                    self.add_relevant_file(m.group(1).strip(), priority=85)
+        elif tool == "find_references" and "matches" in res:
+            self.tool_results.append(result)
+            if len(self.tool_results) > 5:
+                self.tool_results.pop(0)
+            for line in res.get("matches", [])[:5]:
+                m = re.match(r"^([^:\n]+):", line)
+                if m:
+                    self.add_relevant_file(m.group(1).strip(), priority=45)
         elif tool in ["file_write", "apply_patch"]:
             path = args.get("path")
             if path:

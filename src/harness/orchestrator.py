@@ -5,6 +5,7 @@ from .verification.verifier import Verifier
 from .recovery.recovery import RecoveryManager
 from .context.context_manager import ContextManager
 from .planner import Planner
+from typing import Tuple, Set, Dict, Any, Optional, List
 import json
 import re
 
@@ -70,6 +71,8 @@ class Orchestrator:
         if state.verification_results:
             latest = state.verification_results[-1]
             report["completion_status"] = latest.get("completion_status")
+            report["evidence"] = latest.get("evidence", {})
+            report["acceptance_criteria"] = latest.get("acceptance_criteria", {})
             report["test_result"] = {
                 "status": latest.get("status"),
                 "tests_passed": latest.get("tests_passed"),
@@ -84,7 +87,41 @@ class Orchestrator:
             except Exception as exc:
                 self._record_error(state, f"Repository baseline capture failed: {exc}")
 
-    def _expected_changed_files(self, state: State):
+    def _is_mutating_task(self, state: State) -> bool:
+        task_text = (state.task or "").lower()
+        mutating_verbs = {"add", "create", "fix", "implement", "update", "modify", "delete", "remove", "refactor", "write", "patch", "build", "set up", "setup"}
+        words = set(re.findall(r"\b[a-z]+\b", task_text))
+        if words & mutating_verbs:
+            return True
+        if state.task_spec:
+            if state.task_spec.referenced_files:
+                return True
+            if state.task_spec.acceptance_criteria:
+                for crit in state.task_spec.acceptance_criteria:
+                    c_lower = crit.lower()
+                    if any(v in c_lower for v in ["create", "add", "implement", "modify", "update", "delete", "remove", "must exist", "function", "class", "symbol"]):
+                        return True
+        struct = getattr(self.planner, "structured_plan", None)
+        if struct and struct.expected_files:
+            return True
+        return False
+
+    def _expected_changed_files(self, state: State) -> set:
+        explicit_expected = set()
+        for path in re.findall(r"\b(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b", state.task):
+            if not path.endswith(".") and not re.match(r"^\d+\.\d+$", path):
+                explicit_expected.add(path)
+        if state.task_spec and state.task_spec.referenced_files:
+            explicit_expected.update(state.task_spec.referenced_files)
+        struct = getattr(self.planner, "structured_plan", None)
+        if struct and struct.expected_files:
+            explicit_expected.update(struct.expected_files)
+
+        # If explicit files were designated by the task, spec, or plan, only those are expected
+        if explicit_expected:
+            return explicit_expected
+
+        # Otherwise, for generic tasks where files are discovered during execution:
         expected = set()
         for entry in state.tool_history:
             tool_name = entry.get("tool")
@@ -93,13 +130,33 @@ class Orchestrator:
                 path = arguments.get("path")
                 if isinstance(path, str):
                     expected.add(path)
-
-        for path in re.findall(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+", state.task):
-            expected.add(path)
-        struct = getattr(self.planner, "structured_plan", None)
-        if struct and struct.expected_files:
-            expected.update(struct.expected_files)
         return expected
+
+    def _compute_cody_changes(self, state: State, verification: dict) -> Tuple[Set[str], Set[str], Set[str]]:
+        """Distinguish Cody-introduced changes from pre-existing baseline changes."""
+        baseline = state.baseline_repository or {}
+        baseline_files = set(baseline.get("changed_files", []))
+        current_files = set(verification.get("changed_files", []))
+        baseline_signatures = baseline.get("file_signatures", {})
+        current_signatures = verification.get("file_signatures", {})
+
+        # New or untracked files added by Cody
+        cody_files = current_files - baseline_files
+
+        # Pre-existing files whose contents/signatures were modified by Cody
+        for path in current_files & baseline_files:
+            if current_signatures.get(path) != baseline_signatures.get(path):
+                cody_files.add(path)
+
+        # Files deleted by Cody
+        baseline_deleted = set(baseline.get("deleted_files", []))
+        current_deleted = set(verification.get("deleted_files", []))
+        cody_deleted = current_deleted - baseline_deleted
+        cody_files.update(cody_deleted)
+
+        expected_files = self._expected_changed_files(state)
+        unexpected = cody_files - expected_files
+        return cody_files, unexpected, cody_deleted
 
     def _completion_gate(self, state: State, verification: dict):
         if not verification.get("tests_passed"):
@@ -108,24 +165,22 @@ class Orchestrator:
             return "VERIFICATION_FAILED"
 
         ac_result = verification.get("acceptance_criteria")
-        if ac_result and ac_result.get("has_failures"):
-            return "ACCEPTANCE_CRITERIA_FAILED"
+        if ac_result:
+            if ac_result.get("has_failures"):
+                return "ACCEPTANCE_CRITERIA_FAILED"
+            if ac_result.get("has_unresolved"):
+                return "ACCEPTANCE_CRITERIA_UNRESOLVED"
 
         if not state.baseline_repository and "verification_errors" not in verification:
             return "VERIFIED_SUCCESS"
 
-        baseline = state.baseline_repository or {}
-        baseline_files = set(baseline.get("changed_files", []))
-        current_files = set(verification.get("changed_files", []))
-        cody_files = current_files - baseline_files
-        expected_files = self._expected_changed_files(state)
-        baseline_signatures = baseline.get("file_signatures", {})
-        current_signatures = verification.get("file_signatures", {})
-        for path in expected_files & current_files:
-            if current_signatures.get(path) != baseline_signatures.get(path):
-                cody_files.add(path)
+        cody_files, unexpected, cody_deleted = self._compute_cody_changes(state, verification)
 
         if not cody_files:
+            # Check if this task required code modification
+            if self._is_mutating_task(state):
+                return "NO_MEANINGFUL_CHANGE"
+
             mutating_tools = {"file_write", "apply_patch", "shell"}
             has_mutating_action = any(
                 entry.get("tool") in mutating_tools
@@ -142,7 +197,14 @@ class Orchestrator:
             if not has_task_evidence:
                 return "NO_MEANINGFUL_CHANGE"
 
-        unexpected = cody_files - expected_files
+        # Check explicit referenced files from task spec
+        if state.task_spec and state.task_spec.referenced_files:
+            import os
+            for rf in state.task_spec.referenced_files:
+                full_p = os.path.join(state.repo_path, rf)
+                if rf not in cody_files and not os.path.exists(full_p):
+                    return "REQUIRED_FILES_NOT_MODIFIED"
+
         has_shell_change = any(entry.get("tool") == "shell" for entry in state.tool_history)
         if unexpected and not has_shell_change:
             return "UNEXPECTED_CHANGES"
@@ -195,10 +257,17 @@ class Orchestrator:
                     return
 
                 state.tool_history.append({"tool": tool_name, "args": kwargs, "result": result})
+                struct = getattr(self.planner, "structured_plan", None)
+                curr_step_id = struct.current_step.id if struct and struct.current_step else "none"
+                state.plan_step_history.append({
+                    "step_id": curr_step_id,
+                    "tool": tool_name,
+                    "args": kwargs,
+                    "status": result.get("status"),
+                })
                 if result.get("status") == "success":
                     self.context_manager.add_tool_result({"tool": tool_name, "args": kwargs, "result": result})
                     if tool_name in ["file_write", "apply_patch"]:
-                        struct = getattr(self.planner, "structured_plan", None)
                         if struct and struct.current_step:
                             step_files = set(struct.current_step.files)
                             touched_path = kwargs.get("path")
@@ -319,17 +388,16 @@ class Orchestrator:
                 state.changed_files = list(changed_files) if isinstance(changed_files, list) else []
                 completion_status = self._completion_gate(state, verif_res)
                 verif_res["completion_status"] = completion_status
+                cody_files, unexpected, cody_deleted = self._compute_cody_changes(state, verif_res)
                 expected_files = self._expected_changed_files(state)
-                c_files_set = set(state.changed_files)
-                b_files_set = set((state.baseline_repository or {}).get("changed_files", []))
-                cody_files = c_files_set - b_files_set
-                unexpected = cody_files - expected_files
                 has_shell_change = any(entry.get("tool") == "shell" for entry in state.tool_history)
                 ac = verif_res.get("acceptance_criteria")
                 verif_res["evidence"] = {
                     "tests": "PASS" if verif_res.get("tests_passed") else "FAIL",
-                    "expected_files_changed": "PASS" if not (expected_files - c_files_set) else "PARTIAL",
-                    "acceptance_criteria": "PASS" if ac and ac.get("all_passed") else ("FAIL" if ac and ac.get("has_failures") else "UNRESOLVED"),
+                    "repository_changed": "YES" if cody_files else "NO",
+                    "cody_files": sorted(list(cody_files)),
+                    "expected_files_changed": "PASS" if not (expected_files - (set(state.changed_files) | cody_deleted)) else "PARTIAL",
+                    "acceptance_criteria": "PASS" if (ac and ac.get("all_passed")) else ("FAIL" if (ac and ac.get("has_failures")) else "UNRESOLVED"),
                     "unexpected_changes": "NONE" if (not unexpected or has_shell_change) else f"FOUND ({len(unexpected)})",
                     "completion": completion_status,
                 }

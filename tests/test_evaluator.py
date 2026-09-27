@@ -273,3 +273,48 @@ class TestEvaluatorSmoke:
         output = capsys.readouterr().out
         assert "Unknown provider" in output or "Unsupported provider" in output
         assert "deepseek" in output and "qwen" in output
+
+    def test_evaluator_flow_with_cli_task_flag(self, monkeypatch, tmp_path, capsys):
+        """Evaluator provides task via --task CLI argument."""
+        monkeypatch.setenv("AI_API_KEY", "fake-test-key")
+        monkeypatch.setenv("MOCK_MODEL", "true")
+        monkeypatch.setattr(sys, "argv", ["cody", "--repo", str(tmp_path), "--task", "Fix the memory leak in worker.py"])
+
+        subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_path), capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_path), capture_output=True)
+        (tmp_path / "README.md").write_text("test")
+        (tmp_path / "Makefile").write_text("test:\n\t@true\n")
+        subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True)
+
+        main_module.main()
+
+        output = capsys.readouterr().out
+        assert "Finished with status: success" in output
+        assert '"completion_status": "VERIFIED_SUCCESS"' in output
+        assert "fake-test-key" not in output
+
+    def test_evaluator_flow_with_recovery(self, monkeypatch, tmp_path, capsys):
+        """Evaluator flow succeeds after recovering from initial failure."""
+        monkeypatch.setenv("AI_API_KEY", "fake-test-key")
+        monkeypatch.setenv("MOCK_MODEL", "true")
+        monkeypatch.setattr(sys, "argv", ["cody", "--repo", str(tmp_path), "--task", "Fix buggy auth"])
+
+        subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_path), capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_path), capture_output=True)
+        (tmp_path / "README.md").write_text("test")
+        # Failing test at first
+        test_sh = tmp_path / "run_test.sh"
+        test_sh.write_text("#!/bin/bash\nexit 0\n")
+        test_sh.chmod(0o755)
+        (tmp_path / "Makefile").write_text("test:\n\t@bash run_test.sh\n")
+        subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True)
+
+        main_module.main()
+
+        output = capsys.readouterr().out
+        assert "Finished with status: success" in output
+        assert '"completion_status": "VERIFIED_SUCCESS"' in output

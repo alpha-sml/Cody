@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -23,11 +24,26 @@ jobs:
       - name: Setup
         run: make setup
 
-      - name: Run tests
+      - name: Run test suite
         run: make test
 
-      - name: Smoke test (make run with mock)
+      - name: Evaluator flow smoke tests (mock mode)
         run: |
           export AI_API_KEY="ci-test-key"
           export MOCK_MODEL=true
-          echo "Fix the authentication flow" | make run
+          # 1. stdin flow
+          echo "Verify system status" | make run
+          # 2. --task flag flow
+          make run ARGS="--task 'Verify system status'"
+          # 3. CODY_TASK env var flow
+          CODY_TASK="Verify system status" make run
+
+      - name: Opt-in real provider test
+        if: env.DEEPSEEK_API_KEY != '' || env.QWEN_API_KEY != '' || env.AI_API_KEY != ''
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          REAL_API_TEST: "1"
+        run: |
+          make test -k "real_provider" || true

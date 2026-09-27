@@ -387,3 +387,59 @@ def test_unsupported_provider_rejected_even_in_mock_mode():
     with pytest.raises(ValueError, match="Unknown provider"):
         get_client("model", "openai")
 
+
+def test_provider_precedence_matrix(monkeypatch):
+    """CLI overrides environment, which overrides config file defaults."""
+    from src.harness import main as main_module
+    from types import SimpleNamespace
+
+    captured = {}
+    def mock_get_client(model_name, provider):
+        captured["model_name"] = model_name
+        captured["provider"] = provider
+        return object()
+
+    monkeypatch.setattr(main_module, "get_client", mock_get_client)
+    monkeypatch.setattr(main_module, "Orchestrator", lambda **kwargs: type("M", (), {"run": lambda self, state: state})())
+
+    # Case 1: Config defaults when no CLI and no env
+    monkeypatch.delenv("CODY_PROVIDER", raising=False)
+    monkeypatch.delenv("CODY_MODEL", raising=False)
+    from src.harness.state import TaskSpec
+    monkeypatch.setattr(main_module, "_resolve_task", lambda args: TaskSpec(title="t", description="t", source="cli"))
+    fake_cfg = SimpleNamespace(
+        model=SimpleNamespace(provider="deepseek", name="deepseek-v4-flash"),
+        agent=SimpleNamespace(timeout_seconds=30, test_command="make test", max_iterations=15, max_recovery_attempts=3)
+    )
+    monkeypatch.setattr(main_module, "load_config", lambda: fake_cfg)
+
+    import sys
+    monkeypatch.setattr(sys, "argv", ["cody"])
+    main_module.main()
+    assert captured["provider"] == "deepseek"
+    assert captured["model_name"] == "deepseek-v4-flash"
+
+    # Case 2: Env overrides config
+    monkeypatch.setenv("CODY_PROVIDER", "qwen")
+    monkeypatch.setenv("CODY_MODEL", "qwen-turbo")
+    monkeypatch.setattr(sys, "argv", ["cody"])
+    main_module.main()
+    assert captured["provider"] == "qwen"
+    assert captured["model_name"] == "qwen-turbo"
+
+    # Case 3: CLI overrides both Env and Config
+    monkeypatch.setattr(sys, "argv", ["cody", "--provider", "deepseek", "--model", "deepseek-chat"])
+    main_module.main()
+    assert captured["provider"] == "deepseek"
+    assert captured["model_name"] == "deepseek-chat"
+
+
+@pytest.mark.skipif(not os.environ.get("REAL_API_TEST"), reason="Opt-in real provider test requiring credentials")
+def test_real_provider_smoke_test():
+    """Only executed when explicitly requested with REAL_API_TEST=1 and real keys."""
+    for provider in ["deepseek", "qwen"]:
+        client = get_client("", provider=provider)
+        response = client.generate("Respond with json containing action finish and result pong.")
+        assert isinstance(response, dict)
+        assert "action" in response
+

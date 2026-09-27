@@ -5,12 +5,12 @@
 <div align="center">
 
 [![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](requirements.txt)
-[![Tests](https://img.shields.io/badge/tests-200%20passing-success?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-215%2B%20passing-success?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![CI Status](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![Evaluation Providers](https://img.shields.io/badge/eval%20providers-DeepSeek%20%7C%20Qwen-6366F1?style=flat-square)](config/config.yaml)
 [![Credential Isolation](https://img.shields.io/badge/credentials-subprocess%20isolated-8B5CF6?style=flat-square)](src/harness/tools/env.py)
 
-[Overview](#1-what-is-cody) • [Key Capabilities](#2-why-cody) • [Architecture](#3-architecture) • [Execution Flow](#4-execution-flow) • [Model Providers](#5-model-providers) • [Credentials](#6-credential-handling) • [Quick Start](#7-quick-start) • [Evaluation Report](#9-evaluation-report-format)
+[Overview](#1-what-is-cody) • [Architecture](#3-architecture) • [Model Providers & Precedence](#5-model-providers--configuration-precedence) • [Verification & Acceptance](#8-behavioral-acceptance-verification--completion-gate) • [Quick Start](#7-quick-start) • [Evaluation Report](#9-evaluation-report-format) • [Limitations](#11-system-limitations)
 
 </div>
 
@@ -116,7 +116,7 @@ flowchart TD
 
 ---
 
-## 5. Model Providers
+## 5. Model Providers & Configuration Precedence
 
 Evaluation is officially constrained to **DeepSeek** and **Qwen** model families. Cody enforces this boundary: only approved providers can be used during evaluation, and unsupported providers (such as OpenAI, Anthropic, Gemini, or Llama) are rejected immediately at startup.
 
@@ -130,14 +130,21 @@ All evaluation paths use **text-only** OpenAI-compatible chat completion interfa
 | **Qwen** | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | **Approved Evaluation Provider** |
 | **Mock** | In-Memory Mock | Local Execution | **Offline Test Provider** (Not for evaluation) |
 
-> [!IMPORTANT]
-> **Evaluation Requirement Notice**: Final evaluation is restricted to DeepSeek and Qwen according to the organizer clarification. The organizers did not specify an exact model ID; Cody therefore keeps the model ID fully configurable within both approved provider families. `deepseek-v4-flash` and `qwen-plus` are Cody's configured defaults, not organizer mandates.
+### Configuration Precedence Order
 
-### Runtime Provider & Model Selection (Zero Code Modifications)
+Provider and model settings follow strict deterministic precedence:
+1. **CLI Arguments**: `--provider <name>`, `--model <name>` (Highest precedence)
+2. **Environment Variables**: `CODY_PROVIDER`, `CODY_MODEL`
+3. **Configuration File**: `config/config.yaml` (`model.provider`, `model.name`) (Base default)
 
-Switching between DeepSeek and Qwen requires **no source-code modifications**:
+### Credential Resolution Precedence
 
-**Via Environment Variables (Recommended):**
+1. **`AI_API_KEY`**: Primary evaluator standard credential (highest precedence).
+2. **`<PROVIDER>_API_KEY`**: Fallback provider-specific key (`DEEPSEEK_API_KEY` or `QWEN_API_KEY`).
+
+### Runtime Provider & Model Selection Examples
+
+**Via Environment Variables (Recommended for Evaluators):**
 ```bash
 # Evaluate with DeepSeek (default):
 export AI_API_KEY="<EVALUATOR_KEY>"
@@ -146,8 +153,7 @@ make run
 # Evaluate with Qwen:
 export AI_API_KEY="<EVALUATOR_KEY>"
 export CODY_PROVIDER="qwen"
-# Optionally specify an exact Qwen model (defaults to qwen-plus):
-export CODY_MODEL="qwen-max"
+export CODY_MODEL="qwen-plus"
 make run
 ```
 
@@ -224,9 +230,34 @@ echo "Fix the authentication flow" | AI_API_KEY="test-key" MOCK_MODEL=true make 
 
 ---
 
-## 8. Tool Registry & Multi-Evidence Verification
+## 8. Behavioral Acceptance Verification & Completion Gate
 
-### Tool Capabilities (13 Specialized Tools)
+Cody rejects completion claims that lack concrete behavioral evidence. A task is **never** considered complete merely because a file was touched, existing tests happen to pass, or the model emitted `finish`.
+
+### Behavioral Acceptance Verification Layer (`AcceptanceVerifier`)
+
+The verification layer deterministically evaluates objective task criteria and returns one of three strict statuses:
+- **`PASS`**: Concrete evidence validates the criterion (file exists and is non-empty, symbol exists via AST/regex, command executed with exit code 0, JSON parsed and validated, expected stdout substring confirmed).
+- **`FAIL`**: Concrete evidence contradicts the criterion (file missing, symbol not defined, command exited non-zero, expected stdout missing).
+- **`UNRESOLVED`**: The criterion is subjective, unverifiable offline, or lacks objective mechanical indicators. **Unresolved criteria are never assumed to pass.**
+
+### Hardened Completion Gate
+
+The final gate (`Orchestrator._completion_gate`) enforces 5 independent criteria:
+1. **Tests Pass**: The repository test suite executes and exits 0 with zero failures.
+2. **Repository Changed**: If the task requires mutations, Cody-attributed changes (`cody_files`) must be non-empty. Tasks claiming finish without meaningful changes fail with `NO_MEANINGFUL_CHANGE`.
+3. **Expected Files Mutated**: Explicitly required files from the task specification must be changed. Missing required files fail with `REQUIRED_FILES_NOT_MODIFIED`.
+4. **Unexpected Changes Detected**: Mutating files outside the expected scope fails with `UNEXPECTED_CHANGES`.
+5. **Acceptance Criteria Verification**: Any `FAIL` criterion fails verification. Any `UNRESOLVED` criterion triggers `ACCEPTANCE_CRITERIA_UNRESOLVED`. Only fully satisfied criteria achieve `VERIFIED_SUCCESS`.
+
+### Robust Workspace Baseline Tracking
+
+Evaluators may launch Cody in dirty workspaces. Cody records an initial baseline snapshot (`git status --porcelain`, file hashes) and distinguishes:
+- **Pre-existing changes**: Existed before Cody started; NOT attributed to Cody.
+- **Cody-introduced changes**: Newly created files, modified tracked files with altered signatures, and deletions performed by Cody.
+- **Transient Cache Filtering**: Build and test artifacts (`__pycache__`, `.pytest_cache`, `.coverage`, `.mypy_cache`, `.ruff_cache`, `.tox`, `*.pyc`, `*.pyo`, `.DS_Store`) are excluded to avoid false unexpected-change reports.
+
+### Tool Registry (13 Sandboxed Tools)
 
 | Category | Tool | Description |
 |:---|:---|:---|
@@ -247,37 +278,47 @@ echo "Fix the authentication flow" | AI_API_KEY="test-key" MOCK_MODEL=true make 
 ### Automatic Test Discovery Matrix
 
 When no test command is specified, Cody automatically identifies test runners in order of precedence:
-
 1. **Makefile**: `test` target &rarr; `make test`
 2. **Node.js**: `package.json` (`scripts.test`) &rarr; `npm test`
-3. **Python**: `pyproject.toml`, `pytest.ini`, `setup.cfg`, `tests/` directory &rarr; `pytest`
+3. **Python**: `pyproject.toml`, `pytest.ini`, `setup.cfg`, `tox.ini`, `tests/` directory &rarr; `pytest`
 4. **Rust**: `Cargo.toml` &rarr; `cargo test`
 5. **Go**: `go.mod` &rarr; `go test ./...`
 6. **Java**: `pom.xml` &rarr; `mvn test` / `build.gradle` &rarr; `gradle test`
 7. **Fallback**: `make test`
 
-### Verification Status Codes
-
-| Status Code | Meaning |
-|:---|:---|
-| `VERIFY_SUCCESS` | Project test suite passes and acceptance criteria are satisfied |
-| `TEST_EXEC_FAIL` | Test runner exited with a non-zero exit code |
-| `TEST_TIMEOUT` | Test execution exceeded configured timeout limit |
-| `TEST_DISCOVER_FAIL` | Expected build tool or test runner was not found |
-| `REPO_INSPECT_FAIL` | Working tree inspection encountered an error |
-
 ---
 
 ## 9. Evaluation Report Format
 
-Upon task completion or termination, Cody prints a structured JSON evaluation summary to standard output:
+Upon task completion or termination, Cody prints a structured JSON evaluation summary with complete audit evidence:
 
 ```json
 {
-  "task": "Fix the authentication flow",
+  "task": "Fix the authentication flow in login.py",
   "final_status": "success",
   "completion_status": "VERIFIED_SUCCESS",
-  "changed_files": ["src/auth/login.py"],
+  "changed_files": ["login.py"],
+  "evidence": {
+    "repository_changed": "YES",
+    "cody_files": ["login.py"],
+    "expected_files_changed": "PASS",
+    "unexpected_changes": "NONE",
+    "tests": "PASS",
+    "acceptance_criteria": "PASS",
+    "completion": "VERIFIED_SUCCESS"
+  },
+  "acceptance_criteria": {
+    "all_passed": true,
+    "has_failures": false,
+    "has_unresolved": false,
+    "criteria_results": [
+      {
+        "criterion": "login.py exists",
+        "status": "PASS",
+        "evidence": "File exists: login.py (size: 420 bytes)"
+      }
+    ]
+  },
   "model_provider": "deepseek",
   "model_name": "deepseek-v4-flash",
   "model_call_count": 3,
@@ -286,7 +327,7 @@ Upon task completion or termination, Cody prints a structured JSON evaluation su
     "execution": 2,
     "recovery": 0
   },
-  "tool_calls": 1,
+  "tool_calls": 2,
   "verification_attempts": 1,
   "recovery_attempts": 0,
   "test_result": {
@@ -302,7 +343,7 @@ Upon task completion or termination, Cody prints a structured JSON evaluation su
 
 ## 10. Test Suite
 
-Execute the comprehensive automated test suite (200 unit and integration tests):
+Execute the comprehensive automated test suite (215+ unit, integration, and adversarial tests):
 
 ```bash
 make test
@@ -311,16 +352,34 @@ make test
 ```
 tests/
 ├── test_acceptance_verification.py  # Multi-evidence completion & baseline tests
+├── test_adversarial_verification.py # 12 adversarial false-success rejection tests
+├── test_classifier.py               # Failure classification unit tests
 ├── test_client.py                   # Model provider client & API key fallback tests
+├── test_context.py                  # Context manager basic tests
 ├── test_context_priority.py         # Priority-budgeted context manager tests
 ├── test_credential_isolation.py     # Subprocess env credential stripping tests
 ├── test_discovery.py                # Multi-language test discovery matrix tests
 ├── test_evaluator.py                # End-to-end evaluator workflow smoke tests
+├── test_explicit_states.py          # State machine transitions & recovery flow
 ├── test_higher_value_tools.py       # Code nav, project inspection, test runner tests
 ├── test_integration.py              # Full autonomous lifecycle integration tests
+├── test_integration2.py             # Classifier end-to-end integration tests
+├── test_main.py                     # CLI flags, stdin, and env var parsing tests
+├── test_member2.py                  # Tool schemas, patch applying, and model errors
 ├── test_orchestrator.py             # Orchestrator state transitions & gates
 ├── test_recovery_targeted.py        # Failure classification & anti-loop tests
+├── test_state.py                    # State initialization tests
 ├── test_structured_planning.py      # Plan parser, lifecycle, and progression tests
 ├── test_tools.py                    # Sandboxed file, git, and shell tool tests
 └── test_verification.py             # Verifier git hashing & status code tests
 ```
+
+---
+
+## 11. System Limitations
+
+- **Text-Only Interfaces**: Cody exclusively uses text `/chat/completions` API endpoints. Multimodal image/audio inputs are not supported.
+- **Provider Boundary**: Only **DeepSeek** and **Qwen** provider families are supported for live evaluation; offline test suites use the mock provider.
+- **Deterministic Static Verification**: Symbol extraction uses Python AST parsing for Python files and regex fallback for other languages. Complex dynamic metaprogramming symbols may require explicit test suite coverage to establish verification.
+- **Token Bounds**: Context is bounded to prevent token window overflow (`max_tokens: 32000`). Large repositories rely on search, symbol lookups, and prioritized retrieval rather than whole-repo inlining.
+- **Iteration Limits**: Execution is deterministically bounded to `max_iterations: 15` and `max_recovery_attempts: 3` to prevent infinite loops.

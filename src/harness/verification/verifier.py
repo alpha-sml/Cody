@@ -1,9 +1,28 @@
 from .test_runner import TestRunner
-from typing import Dict, Any
+from .acceptance import AcceptanceVerifier
+from typing import Dict, Any, Optional, List, Set, Tuple
 import hashlib
 import os
 import re
 import subprocess
+
+_IGNORE_PATTERNS = (
+    ".git/",
+    "__pycache__",
+    ".pytest_cache",
+    ".coverage",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".DS_Store",
+)
+
+def _is_ignored(path: str) -> bool:
+    if any(pattern in path for pattern in _IGNORE_PATTERNS):
+        return True
+    if path.endswith((".pyc", ".pyo", ".pyd")):
+        return True
+    return False
 
 def _bounded_output(output: Any) -> str:
     if not output:
@@ -17,10 +36,13 @@ class Verifier:
     def __init__(self, test_runner: TestRunner, repo_path: str):
         self.test_runner = test_runner
         self.repo_path = repo_path
+        self._acceptance_verifier = AcceptanceVerifier(repo_path)
 
     def inspect_repository(self) -> Dict[str, Any]:
         tracked_changes = []
         untracked_changes = []
+        deleted_files = []
+        renamed_files: List[Tuple[str, str]] = []
         status_lines = []
         errors = []
 
@@ -38,10 +60,24 @@ class Verifier:
             for line in status_lines:
                 if len(line) < 4:
                     continue
-                path = line[3:]
-                if " -> " in path:
-                    path = path.rsplit(" -> ", 1)[-1]
-                if line[:2] == "??":
+                code = line[:2]
+                raw_path = line[3:].strip()
+                if " -> " in raw_path:
+                    old_path, new_path = raw_path.split(" -> ", 1)
+                    old_path = old_path.strip().strip('"')
+                    new_path = new_path.strip().strip('"')
+                    renamed_files.append((old_path, new_path))
+                    path = new_path
+                else:
+                    path = raw_path.strip('"')
+
+                if _is_ignored(path):
+                    continue
+
+                if "D" in code:
+                    deleted_files.append(path)
+                    tracked_changes.append(path)
+                elif code == "??":
                     untracked_changes.append(path)
                 else:
                     tracked_changes.append(path)
@@ -52,21 +88,27 @@ class Verifier:
 
         changed_files = []
         for path in tracked_changes + untracked_changes:
-            if path and not path.startswith(".git/") and path not in changed_files:
+            if path and not _is_ignored(path) and path not in changed_files:
                 changed_files.append(path)
 
         file_signatures = {}
         for path in changed_files:
-            try:
-                with open(os.path.join(self.repo_path, path), "rb") as changed_file:
-                    file_signatures[path] = hashlib.sha256(changed_file.read()).hexdigest()
-            except OSError:
+            target_path = os.path.join(self.repo_path, path)
+            if os.path.isfile(target_path):
+                try:
+                    with open(target_path, "rb") as changed_file:
+                        file_signatures[path] = hashlib.sha256(changed_file.read()).hexdigest()
+                except OSError:
+                    file_signatures[path] = None
+            else:
                 file_signatures[path] = None
 
         return {
             "changed_files": changed_files,
             "tracked_changes": tracked_changes,
             "untracked_changes": untracked_changes,
+            "deleted_files": deleted_files,
+            "renamed_files": renamed_files,
             "status": status_lines,
             "diff_available": bool(tracked_changes),
             "file_signatures": file_signatures,
@@ -76,67 +118,22 @@ class Verifier:
     def capture_baseline(self) -> Dict[str, Any]:
         return self.inspect_repository()
 
-    def check_acceptance_criteria(self, task_spec: Any, changed_files: list) -> Dict[str, Any]:
-        """Evaluate task acceptance criteria against repository state."""
-        if not task_spec or not getattr(task_spec, "acceptance_criteria", None):
-            return {
-                "all_passed": True,
-                "has_failures": False,
-                "criteria_results": [],
-            }
+    def check_acceptance_criteria(
+        self,
+        task_spec: Any,
+        changed_files: list,
+        cody_files: Optional[Set[str]] = None,
+        test_passed: bool = False,
+    ) -> Dict[str, Any]:
+        """Evaluate task acceptance criteria against repository state using AcceptanceVerifier."""
+        return self._acceptance_verifier.evaluate_task_spec(
+            task_spec=task_spec,
+            changed_files=changed_files,
+            cody_files=cody_files,
+            test_passed=test_passed,
+        )
 
-        results = []
-        has_failures = False
-        all_passed = True
-
-        for criterion in task_spec.acceptance_criteria:
-            c_text = str(criterion).strip()
-            if not c_text:
-                continue
-
-            # Check if criterion mentions specific files
-            mentioned_files = re.findall(r"[\w/.-]+\.\w+", c_text)
-            file_found = False
-            status = "UNRESOLVED"
-            reason = "Subjective or non-deterministic requirement"
-
-            if mentioned_files:
-                for mf in mentioned_files:
-                    full_p = os.path.join(self.repo_path, mf)
-                    if os.path.exists(full_p) or mf in changed_files:
-                        file_found = True
-                        break
-                if file_found:
-                    status = "PASS"
-                    reason = f"Referenced file(s) exist/modified: {mentioned_files}"
-                else:
-                    status = "FAIL"
-                    reason = f"Required file(s) not found: {mentioned_files}"
-                    has_failures = True
-                    all_passed = False
-            elif any(w in c_text.lower() for w in ["test", "pass", "build", "verify"]):
-                # Criteria relating to test passing - determined by test run
-                status = "PASS"
-                reason = "Verified via test suite"
-            else:
-                # Abstract/unresolved criteria
-                status = "UNRESOLVED"
-                reason = "Cannot be objectively validated automatically"
-                all_passed = False
-
-            results.append({
-                "criterion": c_text,
-                "status": status,
-                "reason": reason,
-            })
-
-        return {
-            "all_passed": all_passed,
-            "has_failures": has_failures,
-            "criteria_results": results,
-        }
-
-    def verify(self, task_spec: Any = None) -> Dict[str, Any]:
+    def verify(self, task_spec: Any = None, cody_files: Optional[Set[str]] = None) -> Dict[str, Any]:
         result = self.test_runner.run_tests()
 
         repository = self.inspect_repository()
@@ -158,7 +155,12 @@ class Verifier:
         else:
             status_code = "VERIFY_SUCCESS"
 
-        acceptance = self.check_acceptance_criteria(task_spec, repository["changed_files"])
+        acceptance = self.check_acceptance_criteria(
+            task_spec,
+            repository["changed_files"],
+            cody_files=cody_files,
+            test_passed=is_verified,
+        )
 
         verification = {
             "tests_run": True,
@@ -172,6 +174,8 @@ class Verifier:
             "changed_files": repository["changed_files"],
             "tracked_changes": repository["tracked_changes"],
             "untracked_changes": repository["untracked_changes"],
+            "deleted_files": repository.get("deleted_files", []),
+            "renamed_files": repository.get("renamed_files", []),
             "diff_available": repository["diff_available"],
             "file_signatures": repository["file_signatures"],
             "verification_errors": verification_errors,

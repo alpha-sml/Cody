@@ -22,19 +22,53 @@ class ShellTool(BaseTool):
         self.timeout = timeout
 
     def execute(self, command: str, **kwargs: Any) -> Dict[str, Any]:
+        if not command or not isinstance(command, str) or not command.strip():
+            return self.error_result("Command must be a non-empty string", exit_code=-1)
+
+        cmd_str = command.strip()
+
         try:
+            import shlex
             from .env import sanitized_env
             env = sanitized_env()
 
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                env=env
-            )
+            # Check if shell metacharacters are present
+            shell_metachars = {"|", "&", ";", ">", "<", "$", "\n", "`"}
+            needs_shell = any(c in cmd_str for c in shell_metachars)
+
+            if needs_shell:
+                result = subprocess.run(
+                    cmd_str,
+                    shell=True,
+                    cwd=self.repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    env=env
+                )
+            else:
+                try:
+                    args = shlex.split(cmd_str)
+                    result = subprocess.run(
+                        args,
+                        shell=False,
+                        cwd=self.repo_path,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        env=env
+                    )
+                except (ValueError, FileNotFoundError) as split_exc:
+                    # Fallback to shell if split fails
+                    result = subprocess.run(
+                        cmd_str,
+                        shell=True,
+                        cwd=self.repo_path,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        env=env
+                    )
 
             stdout = _bounded_output(result.stdout)
             stderr = _bounded_output(result.stderr)

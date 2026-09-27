@@ -64,6 +64,29 @@ class StructuredPlan:
             self.current_step.status = "completed"
             self._current_index += 1
 
+    def mark_step(self, step_id: str, status: str):
+        for s in self.steps:
+            if s.id == str(step_id):
+                s.status = status
+                break
+
+    def step_by_id(self, step_id: str) -> Optional[PlanStep]:
+        for s in self.steps:
+            if s.id == str(step_id):
+                return s
+        return None
+
+    @property
+    def all_completed(self) -> bool:
+        return all(s.status == "completed" for s in self.steps)
+
+    def has_unexecuted_file_steps(self, touched_files: set) -> bool:
+        """Check if any pending steps require modifying files that haven't been touched yet."""
+        for s in self.pending_steps:
+            if s.files and not any(f in touched_files for f in s.files):
+                return True
+        return False
+
     def to_dict(self) -> dict:
         return {
             "goal": self.goal,
@@ -71,6 +94,7 @@ class StructuredPlan:
             "current_step_index": self._current_index,
             "expected_files": self.expected_files,
             "expected_verification": self.expected_verification,
+            "all_completed": self.all_completed,
         }
 
     def to_step_list(self) -> List[str]:
